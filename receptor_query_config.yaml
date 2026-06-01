@@ -1,0 +1,106 @@
+# Receptor expression query configuration
+# Edit this file to control which genes and brain regions are analysed.
+
+# -------------------------------------------------------------------
+# Gene list
+# Use official mouse gene symbols (ENSMUSG... or Hgnc-style short names).
+# These are loaded at runtime; the notebook never hard-codes gene names.
+# -------------------------------------------------------------------
+receptors:
+  # dopamine:
+  #   - Drd1
+  #   - Drd2
+  #   - Drd3
+  #   - Drd4
+  #   - Drd5
+   serotonin:
+  #   - Htr1a
+  #   - Htr1b
+     - Htr2a
+  #   - Htr2c
+  #   - Htr3a
+  #   - Htr4
+  #   - Htr6
+  #   - Htr7
+  # glutamate:
+  #   - Grin1
+  #   - Grin2a
+  #   - Grin2b
+  #   - Grm1
+  #   - Grm5
+  # gaba:
+  #   - Gabra1
+  #   - Gabra2
+  #   - Gabrb2
+  #   - Gabrg2
+  # opioid:
+  #   - Oprm1
+  #   - Oprd1
+  #   - Oprk1
+  # cannabinoid:
+  #   - Cnr1
+  #   - Cnr2
+  # acetylcholine:
+  #   - Chrm1
+  #   - Chrm2
+  #   - Chrm4
+  #   - Chrna4
+  #   - Chrna7
+
+# -------------------------------------------------------------------
+# Brain areas
+# Use CCF v3 acronyms (Allen Mouse Brain Atlas parcellation).
+# Full names are in: https://alleninstitute.github.io/abc_atlas_access/docs/parcellation_annotations/
+# -------------------------------------------------------------------
+#brain_areas:
+  # - CTX      # Isocortex (all cortical areas)
+  # - STR      # Striatum
+  # - PAL      # Pallidum
+  # - TH       # Thalamus
+  # - HY       # Hypothalamus
+  # - MB       # Midbrain
+  # - HIP      # Hippocampal formation
+  # - AMY      # Amygdala
+  # - CB       # Cerebellum
+  # - MY       # Medulla
+
+# Optionally narrow to sub-regions (comment out brain_areas above and use these instead):
+brain_areas:
+  - VISp    # Primary visual cortex
+  - VISpm     # Secondary visual cortex
+  - VISam
+  - RSPagl
+#   - MOs     # Secondary motor cortex
+#   - CP      # Caudate-putamen
+#   - ACB     # Nucleus accumbens
+#   - CA1     # Hippocampus CA1
+#   - DG      # Dentate gyrus
+
+# -------------------------------------------------------------------
+# Cell type resolution
+# Choose the level of the Allen taxonomy hierarchy to group by.
+# Options: class | subclass | supertype | cluster
+# -------------------------------------------------------------------
+cell_type_level: supertype #subclass
+
+# -------------------------------------------------------------------
+# Output settings
+# -------------------------------------------------------------------
+output:
+  figures_dir: figures/
+  dpi: 150
+  heatmap_cmap: viridis        # colormap for expression heatmaps
+  spatial_cmap: magma          # colormap for spatial expression maps
+  figsize_heatmap: [14, 8]
+  figsize_spatial: [10, 10]
+  save_processed_data: true    # cache processed gene×cell-type matrices as parquet
+
+# -------------------------------------------------------------------
+# Data access
+# -------------------------------------------------------------------
+data:
+  cache_dir: ~/abc_atlas_cache          # local path for AbcProjectCache downloads
+  use_imputed_merfish: true             # use ~8k-gene imputed matrix when gene not in 500-gene panel
+  expression_unit: log2                 # raw | log2 (log2(CPM+1))
+  merfish_dataset: MERFISH-C57BL6J-638850
+  vizgen_data_dir: null                 # set to local path if Vizgen files already downloaded
