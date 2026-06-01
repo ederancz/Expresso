@@ -1,0 +1,12 @@
+# Conda environment for Expresso (Python 3.12 — required for reliable scientific wheels).
+# From repo root:
+#   conda env create -f environment.yml
+#   conda activate expresso
+name: expresso
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - -r requirements.txt

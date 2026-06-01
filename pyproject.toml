@@ -1,0 +1,10 @@
+[project]
+name = "expresso"
+version = "0.1.0"
+description = "Query receptor gene expression via Allen Brain Cell Atlas"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]

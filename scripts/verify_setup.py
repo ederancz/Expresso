@@ -20,6 +20,22 @@ def main() -> int:
         help="Skip large metadata/expression downloads (steps 4 only)",
     )
     args = parser.parse_args()
+
+    if sys.version_info >= (3, 13):
+        print(
+            f"ERROR: Python {sys.version_info.major}.{sys.version_info.minor} is not supported. "
+            "Use 3.11 or 3.12 (see environment.yml).",
+            file=sys.stderr,
+        )
+        return 1
+    if sys.version_info < (3, 11):
+        print(
+            f"ERROR: Python {sys.version_info.major}.{sys.version_info.minor} is too old. "
+            "Use 3.11 or 3.12.",
+            file=sys.stderr,
+        )
+        return 1
+
     print("1. Loading config...")
     from src.config import load_config, get_figures_dir
 

@@ -2,10 +2,41 @@
 
 Query receptor gene expression across mouse brain areas and cell types using the [Allen Brain Cell Atlas](https://alleninstitute.github.io/abc_atlas_access/).
 
-## Setup
+## Python version
+
+**Use Python 3.12** (3.11 also works). Python 3.13+ is not supported — many dependencies lack prebuilt wheels.
+
+| File | Purpose |
+|------|---------|
+| [`environment.yml`](environment.yml) | Recommended: conda env with `python=3.12` |
+| [`.python-version`](.python-version) | pyenv / local tooling |
+| [`pyproject.toml`](pyproject.toml) | `requires-python = ">=3.11,<3.13"` |
+
+## Setup (recommended)
+
+```bash
+conda env create -f environment.yml
+conda activate expresso
+```
+
+To refresh an existing env:
+
+```bash
+conda env update -f environment.yml --prune
+```
+
+## Setup (pip only)
+
+With Python 3.11 or 3.12 active:
 
 ```bash
 pip install -r requirements.txt
+```
+
+For Milestone 3 (Vizgen), additionally:
+
+```bash
+pip install -r requirements-vizgen.txt
 ```
 
 Edit [`receptor_query_config.yaml`](receptor_query_config.yaml) for genes and brain regions.
