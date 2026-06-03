@@ -40,11 +40,27 @@ def load_config(path: str | Path = "receptor_query_config.yaml") -> dict[str, An
     return cfg
 
 
-def get_figures_dir(cfg: dict[str, Any], base_dir: Path | None = None) -> Path:
-    """Return figures output directory, creating it if needed."""
-    rel = cfg["output"]["figures_dir"]
-    root = base_dir or Path(cfg["_config_path"]).parent
-    out = (root / rel).resolve()
+def get_figures_dir(
+    cfg: dict[str, Any],
+    base_dir: Path | None = None,
+    output_dir: Path | str | None = None,
+) -> Path:
+    """Return figures output directory, creating it if needed.
+
+    Prefer ``output_dir`` (notebook override). Otherwise resolve
+    ``output.figures_dir`` — absolute paths are used as-is; relative paths
+    are resolved under ``base_dir`` or the config file directory.
+    """
+    if output_dir is not None:
+        out = Path(output_dir).expanduser().resolve()
+    else:
+        rel = cfg["output"]["figures_dir"]
+        path = Path(rel).expanduser()
+        if path.is_absolute():
+            out = path.resolve()
+        else:
+            root = base_dir or Path(cfg["_config_path"]).parent
+            out = (root / path).resolve()
     out.mkdir(parents=True, exist_ok=True)
     return out
 

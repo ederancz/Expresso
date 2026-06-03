@@ -84,6 +84,7 @@ cell_type_level: subclass
 # Output settings
 # -------------------------------------------------------------------
 output:
+  # Fallback only; notebooks set OUTPUT_DIR (outside repo).
   figures_dir: figures/
   dpi: 150
   heatmap_cmap: viridis        # colormap for expression heatmaps

@@ -14,6 +14,23 @@ _CORTICAL_ROIS = frozenset({
     "RSP", "SS-GU-VISC", "SSp", "TEa-PERI-ECT", "VIS", "VIS-PTLp",
 })
 
+# CCF v3 sub-regions -> WMB-10X dissection ROI (scRNA lacks per-cell CCF labels).
+_CCF_TO_DISSECTION_ROI: dict[str, str] = {
+    "VISp": "VIS",
+    "VISpm": "VIS",
+    "VISam": "VIS",
+    "VISl": "VIS",
+    "VISal": "VIS",
+    "VISrl": "VIS",
+    "VISli": "VIS",
+    "RSPagl": "RSP",
+    "MOs": "MO-FRP",
+    "CP": "STRd",
+    "ACB": "STRv",
+    "CA1": "HIP",
+    "DG": "HIP",
+}
+
 # feature_matrix_label suffix -> config brain_area (WMB-10Xv3 packages).
 _PACKAGE_TO_BRAIN_AREA = {
     "CB": "CB",
@@ -95,7 +112,21 @@ def build_brain_area_mapping(
     roi_to_area: dict[str, str] = {}
     area_to_rois: dict[str, set[str]] = {ba: set() for ba in brain_areas}
 
+    for ba in brain_areas:
+        dissection = _CCF_TO_DISSECTION_ROI.get(ba)
+        if dissection and dissection in all_rois:
+            roi_to_area[dissection] = ba
+            area_to_rois[ba].add(dissection)
+            warnings.warn(
+                f"brain_area {ba!r} maps to WMB-10X dissection ROI {dissection!r} "
+                f"(scRNA-seq has no CCF parcellation at this resolution).",
+                UserWarning,
+                stacklevel=2,
+            )
+
     for roi in all_rois:
+        if roi in roi_to_area:
+            continue
         area = _roi_to_brain_area(roi)
         if area is not None and area in brain_areas:
             roi_to_area[roi] = area

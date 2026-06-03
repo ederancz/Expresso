@@ -81,9 +81,10 @@ def plot_family_heatmap(
     gene_matrix: pd.DataFrame,
     config: dict[str, Any],
     base_dir: Path | None = None,
+    output_dir: Path | str | None = None,
 ) -> Path:
-    """Save figures/heatmap_{family}.png."""
-    figures_dir = get_figures_dir(config, base_dir)
+    """Save heatmap_{family}.png under the configured figures directory."""
+    figures_dir = get_figures_dir(config, base_dir, output_dir)
     out = figures_dir / f"heatmap_{family}.png"
     plot_heatmap(
         gene_matrix,
@@ -99,9 +100,10 @@ def plot_combined_heatmap(
     all_genes_matrix: pd.DataFrame,
     config: dict[str, Any],
     base_dir: Path | None = None,
+    output_dir: Path | str | None = None,
 ) -> Path:
-    """Save figures/heatmap_combined.png (genes x top cell types)."""
-    figures_dir = get_figures_dir(config, base_dir)
+    """Save heatmap_combined.png (genes x top cell types)."""
+    figures_dir = get_figures_dir(config, base_dir, output_dir)
     out = figures_dir / "heatmap_combined.png"
     # Rows = cell types, cols = genes — transpose for clustermap readability
     mat = all_genes_matrix
@@ -179,6 +181,7 @@ def plot_family_spatial_panel(
     coords_df: pd.DataFrame,
     config: dict[str, Any],
     base_dir: Path | None = None,
+    output_dir: Path | str | None = None,
 ) -> Path | None:
     """
     Multi-panel grid: one row per gene, one column per projection.
@@ -236,7 +239,7 @@ def plot_family_spatial_panel(
     fig.suptitle(f"{family} — spatial expression (CCF)", fontsize=12)
     fig.tight_layout()
 
-    figures_dir = get_figures_dir(config, base_dir)
+    figures_dir = get_figures_dir(config, base_dir, output_dir)
     out = figures_dir / f"spatial_panel_{family}.png"
     fig.savefig(out, dpi=dpi, bbox_inches="tight")
     plt.close(fig)

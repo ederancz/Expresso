@@ -203,6 +203,10 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# Figure outputs (notebooks save outside repo; ignore accidental writes)
+figures/*.png
+figures/*.pdf
+
 # Ruff stuff:
 .ruff_cache/
 

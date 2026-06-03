@@ -49,8 +49,10 @@ receptors:
 
 # -------------------------------------------------------------------
 # Brain areas
-# Use CCF v3 acronyms (Allen Mouse Brain Atlas parcellation).
-# Full names are in: https://alleninstitute.github.io/abc_atlas_access/docs/parcellation_annotations/
+# Milestone 1 (scRNA): coarse divisions (CTX, STR, TH, …) or CCF sub-regions
+# below — sub-regions map to WMB-10X dissection blocks (approximate, not true CCF).
+# Milestone 2 (MERFISH): true CCF v3 acronyms via spatial parcellation.
+# Full names: https://alleninstitute.github.io/abc_atlas_access/docs/parcellation_annotations/
 # -------------------------------------------------------------------
 #brain_areas:
   # - CTX      # Isocortex (all cortical areas)
@@ -67,9 +69,9 @@ receptors:
 # Optionally narrow to sub-regions (comment out brain_areas above and use these instead):
 brain_areas:
   - VISp    # Primary visual cortex
-  - VISpm     # Secondary visual cortex
-  - VISam
-  - RSPagl
+  # - VISpm     # Secondary visual cortex
+  # - VISam
+  # - RSPagl
 #   - MOs     # Secondary motor cortex
 #   - CP      # Caudate-putamen
 #   - ACB     # Nucleus accumbens
@@ -87,6 +89,7 @@ cell_type_level: supertype #subclass
 # Output settings
 # -------------------------------------------------------------------
 output:
+  # Fallback only; notebooks set OUTPUT_DIR (outside repo). Do not write figures here.
   figures_dir: figures/
   dpi: 150
   heatmap_cmap: viridis        # colormap for expression heatmaps
