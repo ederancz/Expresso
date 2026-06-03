@@ -94,14 +94,67 @@ def warn_missing_genes(found: list[str], requested: list[str]) -> None:
         )
 
 
+def scrna_pooled_column_label(dissection: str, requested_areas: list[str]) -> str:
+    """Heatmap column label for a dissection ROI pooling multiple config areas."""
+    return f"{dissection} (pooled: {', '.join(requested_areas)})"
+
+
+def scrna_heatmap_columns(config: dict[str, Any]) -> list[str]:
+    """Display column labels for scRNA heatmaps (one column per dissection pool)."""
+    brain_areas: list[str] = config["brain_areas"]
+    pools: dict[str, list[str]] = config.get("_scrna_pools") or {}
+    pooled_areas = {a for areas in pools.values() for a in areas}
+
+    columns: list[str] = []
+    seen_dissections: set[str] = set()
+    for ba in brain_areas:
+        if ba in pooled_areas:
+            dissection = next(d for d, areas in pools.items() if ba in areas)
+            if dissection in seen_dissections:
+                continue
+            seen_dissections.add(dissection)
+            columns.append(scrna_pooled_column_label(dissection, pools[dissection]))
+        else:
+            columns.append(ba)
+    return columns
+
+
+def scrna_column_to_brain_area(config: dict[str, Any]) -> dict[str, str]:
+    """Map heatmap display column label -> brain_area value in aggregated data."""
+    pools: dict[str, list[str]] = config.get("_scrna_pools") or {}
+    pooled_areas = {a for areas in pools.values() for a in areas}
+
+    mapping: dict[str, str] = {}
+    seen_dissections: set[str] = set()
+    for ba in config["brain_areas"]:
+        if ba in pooled_areas:
+            dissection = next(d for d, areas in pools.items() if ba in areas)
+            if dissection in seen_dissections:
+                continue
+            seen_dissections.add(dissection)
+            label = scrna_pooled_column_label(dissection, pools[dissection])
+            mapping[label] = dissection
+        else:
+            mapping[ba] = ba
+    return mapping
+
+
 def build_brain_area_mapping(
     cache: Any,
     brain_areas: list[str],
-) -> tuple[dict[str, set[str]], Callable[[pd.DataFrame], pd.Series]]:
+) -> tuple[
+    dict[str, set[str]],
+    Callable[[pd.DataFrame], pd.Series],
+    dict[str, list[str]],
+]:
     """
     Build region_of_interest_acronym -> brain_area mapping for WMB-10X scRNA.
 
-    Returns (brain_area -> set of ROI acronyms), assign_brain_area function).
+    When multiple config brain_areas share one dissection ROI (e.g. VISp/VISpm/VISam
+    -> VIS), cells are labeled with the dissection acronym and the returned pool map
+    records which config areas were collapsed.
+
+    Returns (area_to_rois, assign_brain_area, scrna_pools).
     """
     roi_meta = cache.get_metadata_dataframe(
         directory="WMB-10X",
@@ -111,10 +164,29 @@ def build_brain_area_mapping(
 
     roi_to_area: dict[str, str] = {}
     area_to_rois: dict[str, set[str]] = {ba: set() for ba in brain_areas}
+    scrna_pools: dict[str, list[str]] = {}
 
+    dissection_to_config: dict[str, list[str]] = {}
     for ba in brain_areas:
         dissection = _CCF_TO_DISSECTION_ROI.get(ba)
         if dissection and dissection in all_rois:
+            dissection_to_config.setdefault(dissection, []).append(ba)
+
+    for dissection, config_areas in dissection_to_config.items():
+        if len(config_areas) > 1:
+            scrna_pools[dissection] = list(config_areas)
+            roi_to_area[dissection] = dissection
+            for ba in config_areas:
+                area_to_rois[ba].add(dissection)
+            warnings.warn(
+                f"brain_areas {config_areas} share WMB-10X dissection ROI {dissection!r} "
+                f"(scRNA-seq has no CCF parcellation). Cells labeled {dissection!r}; "
+                f"heatmap shows one pooled column. Use MERFISH for sub-region resolution.",
+                UserWarning,
+                stacklevel=2,
+            )
+        else:
+            ba = config_areas[0]
             roi_to_area[dissection] = ba
             area_to_rois[ba].add(dissection)
             warnings.warn(
@@ -151,7 +223,7 @@ def build_brain_area_mapping(
 
         return cell_meta.apply(_assign_row, axis=1)
 
-    return area_to_rois, assign_brain_area
+    return area_to_rois, assign_brain_area, scrna_pools
 
 
 def _roi_to_brain_area(roi: str) -> str | None:

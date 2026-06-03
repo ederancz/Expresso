@@ -76,6 +76,17 @@ def plot_heatmap(
         plt.show()
 
 
+def _scrna_heatmap_subtitle(config: dict[str, Any]) -> str:
+    pools: dict[str, list[str]] = config.get("_scrna_pools") or {}
+    if not pools:
+        return ""
+    parts = [
+        f"{dissection} pools {', '.join(areas)}"
+        for dissection, areas in pools.items()
+    ]
+    return f" [{'; '.join(parts)} — not distinguishable in scRNA]"
+
+
 def plot_family_heatmap(
     family: str,
     gene_matrix: pd.DataFrame,
@@ -88,7 +99,7 @@ def plot_family_heatmap(
     out = figures_dir / f"heatmap_{family}.png"
     plot_heatmap(
         gene_matrix,
-        title=f"{family} receptors — mean log2(CPM+1)",
+        title=f"{family} receptors — mean log2(CPM+1){_scrna_heatmap_subtitle(config)}",
         config=config,
         save_path=out,
         base_dir=base_dir,

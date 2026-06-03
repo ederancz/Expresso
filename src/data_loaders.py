@@ -59,18 +59,37 @@ def load_scrna_cell_metadata(cache: Any, config: dict[str, Any]) -> pd.DataFrame
     cell_type_col = config["cell_type_level"]
     brain_areas = config["brain_areas"]
 
-    area_to_rois, assign_brain_area = build_brain_area_mapping(cache, brain_areas)
+    area_to_rois, assign_brain_area, scrna_pools = build_brain_area_mapping(
+        cache, brain_areas,
+    )
+    config["_scrna_pools"] = scrna_pools
+
     cell = cell.join(cluster_details, on="cluster_alias")
     cell["brain_area"] = assign_brain_area(cell)
 
-    cell = cell[cell["brain_area"].isin(brain_areas)].copy()
+    assignable = set(brain_areas) | set(scrna_pools.keys())
+    cell = cell[cell["brain_area"].isin(assignable)].copy()
 
+    pooled_config_areas = {a for areas in scrna_pools.values() for a in areas}
     for ba in brain_areas:
+        if ba in pooled_config_areas:
+            continue
         n = (cell["brain_area"] == ba).sum()
         if n == 0:
             warnings.warn(
                 f"No cells mapped to brain_area {ba!r}; "
                 f"ROI set was {sorted(area_to_rois.get(ba, []))}",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    for dissection, config_areas in scrna_pools.items():
+        n = (cell["brain_area"] == dissection).sum()
+        if n == 0:
+            warnings.warn(
+                f"No cells mapped to pooled dissection ROI {dissection!r} "
+                f"(config areas {config_areas}); "
+                f"ROI set was {sorted(area_to_rois.get(config_areas[0], []))}",
                 UserWarning,
                 stacklevel=2,
             )
@@ -205,13 +224,16 @@ def combined_heatmap_matrix(
 def family_gene_region_matrix(
     agg_long: pd.DataFrame,
     family: str,
-    brain_areas: list[str],
+    config: dict[str, Any],
 ) -> pd.DataFrame:
     """
     Per-family heatmap: rows=cell types, columns=brain areas.
 
     For multiple genes, average expression across genes in the family.
+    Pooled scRNA dissection ROIs appear as a single column (see scrna_heatmap_columns).
     """
+    from src.utils import scrna_column_to_brain_area, scrna_heatmap_columns
+
     sub = agg_long[agg_long["family"] == family]
     if sub.empty:
         return pd.DataFrame()
@@ -221,7 +243,13 @@ def family_gene_region_matrix(
         values="mean_expression",
         aggfunc="mean",
     )
-    return mat.reindex(columns=brain_areas)
+    col_map = scrna_column_to_brain_area(config)
+    display_cols = scrna_heatmap_columns(config)
+
+    renamed = pd.DataFrame(index=mat.index)
+    for display, source_ba in col_map.items():
+        renamed[display] = mat[source_ba] if source_ba in mat.columns else float("nan")
+    return renamed.reindex(columns=display_cols)
 
 
 def load_merfish_cell_metadata(cache: Any, config: dict[str, Any]) -> pd.DataFrame:
