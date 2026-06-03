@@ -100,6 +100,21 @@ def load_scrna_cell_metadata(cache: Any, config: dict[str, Any]) -> pd.DataFrame
     return cell
 
 
+def check_scrna_genes_in_metadata(
+    cache: Any,
+    genes: list[str],
+) -> tuple[list[str], list[str]]:
+    """
+    Check gene symbols against WMB-10X gene metadata.
+
+    Returns (found_symbols, missing_symbols).
+    """
+    gene_df = cache.get_metadata_dataframe(directory=WMB_10X_DIR, file_name="gene")
+    gene_df = gene_df.set_index("gene_identifier")
+    symbol_to_ensembl, missing = resolve_gene_ids(gene_df, genes)
+    return list(symbol_to_ensembl.keys()), missing
+
+
 def load_expression_subset(
     cache: Any,
     genes: list[str],
@@ -246,9 +261,19 @@ def family_gene_region_matrix(
     col_map = scrna_column_to_brain_area(config)
     display_cols = scrna_heatmap_columns(config)
 
+    pools: dict[str, list[str]] = config.get("_scrna_pools") or {}
+
     renamed = pd.DataFrame(index=mat.index)
     for display, source_ba in col_map.items():
-        renamed[display] = mat[source_ba] if source_ba in mat.columns else float("nan")
+        if source_ba in mat.columns:
+            renamed[display] = mat[source_ba]
+        else:
+            # Fallback: stale agg_long may still use pre-pool labels (e.g. VISam).
+            legacy_cols = [c for c in pools.get(source_ba, []) if c in mat.columns]
+            if legacy_cols:
+                renamed[display] = mat[legacy_cols].mean(axis=1)
+            else:
+                renamed[display] = np.nan
     return renamed.reindex(columns=display_cols)
 
 

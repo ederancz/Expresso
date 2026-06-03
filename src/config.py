@@ -40,7 +40,25 @@ def load_config(path: str | Path = "receptor_query_config.yaml") -> dict[str, An
     return cfg
 
 
-def get_figures_dir(
+def restrict_config_to_genes(config: dict[str, Any], gene_symbols: list[str]) -> list[str]:
+    """
+    Restrict derived config gene lists to ``gene_symbols``.
+
+    Returns sorted list of previously requested symbols that were removed.
+    """
+    loaded = set(gene_symbols)
+    requested = list(config["_all_genes"])
+    missing = sorted(set(requested) - loaded)
+
+    config["_all_genes"] = [g for g in requested if g in loaded]
+    config["_genes_flat"] = {
+        g: f for g, f in config["_genes_flat"].items() if g in loaded
+    }
+    config["_families"] = [
+        f for f in config["_families"]
+        if any(g in loaded for g in config["receptors"].get(f, []))
+    ]
+    return missing
     cfg: dict[str, Any],
     base_dir: Path | None = None,
     output_dir: Path | str | None = None,

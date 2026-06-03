@@ -49,8 +49,19 @@ def plot_heatmap(
 
     data = agg_df.astype(float)
     n_rows, n_cols = data.shape
+    values = data.to_numpy()
+    has_non_finite = not np.isfinite(values).all()
 
-    if n_rows >= 2 and n_cols >= 2:
+    can_cluster = n_rows >= 2 and n_cols >= 2 and not has_non_finite
+    if has_non_finite and n_rows >= 2 and n_cols >= 2:
+        warnings.warn(
+            "Heatmap contains missing values (cell types absent in some brain areas); "
+            "using plain heatmap without clustering.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    if can_cluster:
         g = sns.clustermap(
             data,
             cmap=cmap,
@@ -64,7 +75,8 @@ def plot_heatmap(
         fig = g.fig
     else:
         fig, ax = plt.subplots(figsize=figsize)
-        sns.heatmap(data, cmap=cmap, ax=ax)
+        mask = ~np.isfinite(values) if has_non_finite else None
+        sns.heatmap(data, cmap=cmap, ax=ax, mask=mask)
         ax.set_title(title)
 
     if save_path:
