@@ -37,7 +37,7 @@ def main() -> int:
         return 1
 
     print("1. Loading config...")
-    from src.config import load_config, get_figures_dir
+    from src.config import DEFAULT_OUTPUT_DIR, load_config, start_run
 
     config_path = PROJECT_ROOT / "receptor_query_config.yaml"
     config = load_config(config_path)
@@ -93,9 +93,14 @@ def main() -> int:
         index=["type_a", "type_b"],
         columns=["STR", "TH"],
     )
-    figures_dir = get_figures_dir(config, PROJECT_ROOT)
-    out = figures_dir / "verify_test_heatmap.png"
-    plot_heatmap(mock, "verify test", config, save_path=out, base_dir=PROJECT_ROOT)
+    run_dir = start_run(
+        PROJECT_ROOT,
+        config,
+        exploration_root=DEFAULT_OUTPUT_DIR,
+        notebook="verify_setup",
+    )
+    out = run_dir / "verify_test_heatmap.png"
+    plot_heatmap(mock, "verify test", config, save_path=out)
     if out.exists():
         print(f"   OK — {out}")
     else:

@@ -417,7 +417,7 @@ Plots use 99th percentile of positive values for `vmax`, `vmin=0`, rasterized sc
 Notebooks set:
 
 ```python
-OUTPUT_DIR = Path("/Users/rancze/Documents/Projects/Ach_NE_Marius_Felix/exploration")
+OUTPUT_DIR = Path("/Users/rancze/Documents/!Projects/Ach_NE_Marius_Felix/exploration")
 figures_dir = get_figures_dir(config, output_dir=OUTPUT_DIR)
 ```
 

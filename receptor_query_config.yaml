@@ -109,8 +109,8 @@ cell_type_level: supertype
 # Output settings
 # -------------------------------------------------------------------
 output:
-  # Fallback only; notebooks set OUTPUT_DIR (outside repo).
-  figures_dir: figures/
+  # Root for figures and cached tables. Notebooks override via OUTPUT_DIR.
+  output_dir: /Users/rancze/Documents/!Projects/Ach_NE_Marius_Felix/exploration
   dpi: 150
   heatmap_cmap: viridis        # colormap for expression heatmaps
   spatial_cmap: magma          # colormap for spatial expression maps
