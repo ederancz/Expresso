@@ -103,7 +103,13 @@ brain_areas:
 # Choose the level of the Allen taxonomy hierarchy to group by.
 # Options: class | subclass | supertype | cluster
 # -------------------------------------------------------------------
-cell_type_level: supertype
+cell_type_level: cluster
+
+# Optional loose filter: keep cell types whose name contains any substring below.
+# Use [] or omit to include all types at cell_type_level.
+cell_type_name_filter:
+  - "L2/3"
+  - "L5"
 
 # -------------------------------------------------------------------
 # Output settings

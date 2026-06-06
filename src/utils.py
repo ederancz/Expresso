@@ -249,6 +249,30 @@ def _roi_to_brain_area(roi: str) -> str | None:
     return None
 
 
+def filter_cell_types_by_name(
+    cell_types: list[str] | pd.Index,
+    config: dict[str, Any],
+) -> list[str]:
+    """
+    Apply optional ``cell_type_name_filter`` from config (substring match, OR logic).
+
+    Returns sorted cell type names; empty filter keeps all.
+    """
+    patterns: list[str] = config.get("cell_type_name_filter") or []
+    names = [str(ct) for ct in cell_types]
+    if not patterns:
+        return sorted(names)
+    matched = sorted(ct for ct in names if any(p in ct for p in patterns))
+    if not matched:
+        warnings.warn(
+            f"cell_type_name_filter {patterns!r} matched no cell types "
+            f"(of {len(names)} at {config.get('cell_type_level', 'unknown')!r})",
+            UserWarning,
+            stacklevel=2,
+        )
+    return matched
+
+
 def top_variable_cell_types(
     matrix: pd.DataFrame,
     n: int = 50,

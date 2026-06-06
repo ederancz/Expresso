@@ -222,18 +222,25 @@ def aggregate_scrna_expression(
 
 def combined_heatmap_matrix(
     agg_long: pd.DataFrame,
-    top_cell_types: list[str],
-    brain_areas: list[str],
+    config: dict[str, Any],
 ) -> pd.DataFrame:
-    """Rows=cell types, columns=genes (mean across brain areas for each gene)."""
-    sub = agg_long[agg_long["cell_type"].isin(top_cell_types)]
-    mat = sub.pivot_table(
+    """
+    Combined heatmap matrix: rows=cell types, columns=receptor genes (family order).
+
+    Expression is mean across configured brain areas per cell type × gene.
+    Cell types may be narrowed via ``cell_type_name_filter`` in config.
+    """
+    from src.utils import filter_cell_types_by_name
+
+    genes = config["_all_genes"]
+    cell_types = filter_cell_types_by_name(agg_long["cell_type"].unique(), config)
+    mat = agg_long.pivot_table(
         index="cell_type",
         columns="gene",
         values="mean_expression",
         aggfunc="mean",
     )
-    return mat.reindex(index=top_cell_types)
+    return mat.reindex(index=cell_types, columns=genes)
 
 
 def family_gene_region_matrix(
@@ -247,7 +254,11 @@ def family_gene_region_matrix(
     For multiple genes, average expression across genes in the family.
     Pooled scRNA dissection ROIs appear as a single column (see scrna_heatmap_columns).
     """
-    from src.utils import scrna_column_to_brain_area, scrna_heatmap_columns
+    from src.utils import (
+        filter_cell_types_by_name,
+        scrna_column_to_brain_area,
+        scrna_heatmap_columns,
+    )
 
     sub = agg_long[agg_long["family"] == family]
     if sub.empty:
@@ -274,7 +285,8 @@ def family_gene_region_matrix(
                 renamed[display] = mat[legacy_cols].mean(axis=1)
             else:
                 renamed[display] = np.nan
-    return renamed.reindex(columns=display_cols)
+    cell_types = filter_cell_types_by_name(renamed.index, config)
+    return renamed.reindex(index=cell_types, columns=display_cols)
 
 
 def load_merfish_cell_metadata(cache: Any, config: dict[str, Any]) -> pd.DataFrame:

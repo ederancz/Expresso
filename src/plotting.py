@@ -37,6 +37,10 @@ def plot_heatmap(
     config: dict[str, Any],
     save_path: Path | str | None = None,
     base_dir: Path | None = None,
+    *,
+    row_cluster: bool = True,
+    col_cluster: bool = True,
+    figsize: tuple[float, float] | None = None,
 ) -> None:
     """Seaborn clustermap wrapper; falls back to plain heatmap if too small."""
     if agg_df.empty:
@@ -45,7 +49,8 @@ def plot_heatmap(
 
     cmap = config["output"].get("heatmap_cmap", "viridis")
     dpi = config["output"].get("dpi", 150)
-    figsize = _figsize(config, "figsize_heatmap", (14, 8))
+    if figsize is None:
+        figsize = _figsize(config, "figsize_heatmap", (14, 8))
 
     data = agg_df.astype(float)
     n_rows, n_cols = data.shape
@@ -66,8 +71,8 @@ def plot_heatmap(
             data,
             cmap=cmap,
             figsize=figsize,
-            row_cluster=True,
-            col_cluster=True,
+            row_cluster=row_cluster,
+            col_cluster=col_cluster,
             dendrogram_ratio=0.12,
             cbar_pos=(0.02, 0.8, 0.03, 0.15),
         )
@@ -119,23 +124,39 @@ def plot_family_heatmap(
     return out
 
 
+def _cell_type_filter_subtitle(config: dict[str, Any]) -> str:
+    patterns: list[str] = config.get("cell_type_name_filter") or []
+    if not patterns:
+        return ""
+    return f" [name contains: {', '.join(patterns)}]"
+
+
 def plot_combined_heatmap(
     all_genes_matrix: pd.DataFrame,
     config: dict[str, Any],
     base_dir: Path | None = None,
     output_dir: Path | str | None = None,
 ) -> Path:
-    """Save heatmap_combined.png (genes x top cell types)."""
+    """Save heatmap_combined.png (cell types × receptor genes)."""
     figures_dir = get_figures_dir(config, base_dir, output_dir)
     out = figures_dir / "heatmap_combined.png"
-    # Rows = cell types, cols = genes — transpose for clustermap readability
-    mat = all_genes_matrix
+    n_cell_types, n_genes = all_genes_matrix.shape
+    base = _figsize(config, "figsize_heatmap", (14, 8))
+    figsize = (max(base[0], n_genes * 0.22), max(base[1], n_cell_types * 0.12))
+    level = config["cell_type_level"]
     plot_heatmap(
-        mat,
-        title="All receptors — top variable cell types",
+        all_genes_matrix,
+        title=(
+            f"All {level}s × receptors — mean log2(CPM+1)"
+            f"{_cell_type_filter_subtitle(config)}"
+            f"{_scrna_heatmap_subtitle(config)}"
+        ),
         config=config,
         save_path=out,
         base_dir=base_dir,
+        row_cluster=True,
+        col_cluster=False,
+        figsize=figsize,
     )
     return out
 

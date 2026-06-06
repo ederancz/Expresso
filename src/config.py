@@ -46,6 +46,11 @@ def load_config(path: str | Path = "receptor_query_config.yaml") -> dict[str, An
     cfg["_families"] = list(cfg["receptors"].keys())
     cfg["_config_path"] = str(config_path)
 
+    raw_filter = cfg.get("cell_type_name_filter") or []
+    if not isinstance(raw_filter, list):
+        raise TypeError("cell_type_name_filter must be a list of substrings")
+    cfg["cell_type_name_filter"] = [str(s) for s in raw_filter]
+
     return cfg
 
 
@@ -115,7 +120,11 @@ def start_run(
         output_dir=exploration_root,
         cfg=cfg if exploration_root is None else None,
     )
-    stamp = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d_%H%M%S")
+    level = cfg["cell_type_level"]
+    stamp = (
+        datetime.now(timezone.utc).astimezone().strftime("%Y%m%d_%H%M%S")
+        + f"_{level}"
+    )
     run_dir = root / stamp
     suffix = 0
     while run_dir.exists():
@@ -129,6 +138,7 @@ def start_run(
     manifest: dict[str, Any] = {
         "run_id": run_dir.name,
         "started_at": datetime.now(timezone.utc).astimezone().isoformat(),
+        "cell_type_level": level,
         "notebook": notebook,
         "exploration_root": str(root),
         "run_dir": str(run_dir.resolve()),
