@@ -1,4 +1,0 @@
-# Milestone 3 only (Vizgen / squidpy). Requires Python 3.11–3.12 (see environment.yml).
-#   pip install -r requirements-vizgen.txt
--r requirements.txt
-squidpy>=1.4

@@ -33,11 +33,7 @@ With Python 3.11 or 3.12 active:
 pip install -r requirements.txt
 ```
 
-For Milestone 3 (Vizgen), additionally:
-
-```bash
-pip install -r requirements-vizgen.txt
-```
+For Milestone 3 (Vizgen), no extra pip packages are needed beyond `requirements.txt`. Download Vizgen CSVs and set `data.vizgen_data_dir` in the config.
 
 Edit [`receptor_query_config.yaml`](receptor_query_config.yaml) for genes and brain regions.
 
@@ -47,8 +43,8 @@ Edit [`receptor_query_config.yaml`](receptor_query_config.yaml) for genes and br
 |----------|-------------|
 | [`notebooks/01_scrna_heatmaps.ipynb`](notebooks/01_scrna_heatmaps.ipynb) | WMB-10Xv3 heatmaps by cell type × brain area |
 | [`notebooks/02_merfish_spatial.ipynb`](notebooks/02_merfish_spatial.ipynb) | MERFISH heatmaps (cell type × CCF brain area) |
-| `notebooks/03_vizgen_crossref.ipynb` | TODO — Milestone 3 |
-| `notebooks/04_zhuang_crossref.ipynb` | TODO — Milestone 4 |
+| [`notebooks/03_vizgen_crossref.ipynb`](notebooks/03_vizgen_crossref.ipynb) | Vizgen MERFISH cross-ref vs Allen |
+| [`notebooks/04_zhuang_crossref.ipynb`](notebooks/04_zhuang_crossref.ipynb) | Zhuang MERFISH cross-ref vs Allen |
 
 ## Smoke test
 

@@ -53,8 +53,7 @@ Expresso/
 ├── receptor_query_config.yaml     # Runtime config (genes, regions, output, data paths)
 ├── pyproject.toml                 # Package metadata (requires-python >=3.11,<3.13)
 ├── environment.yml                # Conda env (Python 3.12 + pip requirements)
-├── requirements.txt               # Core deps (Milestones 1–2)
-├── requirements-vizgen.txt        # Optional deps for Milestone 3 (squidpy)
+├── requirements.txt               # Core deps (Milestones 1–3)
 ├── .python-version                # pyenv hint (3.12)
 │
 ├── src/                           # Shared library code
@@ -66,7 +65,7 @@ Expresso/
 ├── notebooks/
 │   ├── 01_scrna_heatmaps.ipynb    # Milestone 1 — implemented, run successfully
 │   ├── 02_merfish_spatial.ipynb   # Milestone 2 — implemented, run successfully
-│   ├── 03_vizgen_crossref.ipynb   # Milestone 3 — TODO stub
+│   ├── 03_vizgen_crossref.ipynb   # Milestone 3 — Vizgen cross-ref vs Allen
 │   └── 04_zhuang_crossref.ipynb   # Milestone 4 — TODO stub
 │
 ├── scripts/
@@ -431,7 +430,7 @@ Some notebook cells print paths under `Expresso/figures/` — that happens when 
 |----------|--------|-----------------|
 | `01_scrna_heatmaps.ipynb` | ✅ Complete | `heatmap_{family}.png`, `heatmap_combined.png`, optional parquet |
 | `02_merfish_spatial.ipynb` | ✅ Complete | `spatial_{gene}_{projection}.png`, `spatial_panel_{family}.png` |
-| `03_vizgen_crossref.ipynb` | 🚧 Stub | Config load + OUTPUT_DIR only |
+| `03_vizgen_crossref.ipynb` | ✅ Implemented | Vizgen heatmaps + Allen cross-ref (parquet reuse) |
 | `04_zhuang_crossref.ipynb` | 🚧 Stub | Config load + OUTPUT_DIR only |
 
 ### Common notebook boilerplate
@@ -465,7 +464,7 @@ Parquet enables re-plotting or downstream analysis without re-downloading expres
 | Python | **3.11 or 3.12** only (`requires-python = ">=3.11,<3.13"`) |
 | Recommended setup | `conda env create -f environment.yml && conda activate expresso` |
 | Pip alternative | `pip install -r requirements.txt` |
-| Vizgen (M3) | Additional `pip install -r requirements-vizgen.txt` |
+| Vizgen (M3) | Same as M1/M2 (`requirements.txt`); Vizgen CSV I/O uses pandas/anndata |
 
 ### Core packages
 
@@ -501,7 +500,7 @@ Exits with error on unsupported Python (≥3.13 or <3.11).
 
 - **Data:** Vizgen MERFISH Mouse Receptor Map (483 genes, 734k cells); flat CSV/HDF5
 - **Config:** `data.vizgen_data_dir`
-- **Deps:** `squidpy` via `requirements-vizgen.txt`
+- **Deps:** same as Milestones 1–2 (`requirements.txt`; pandas CSV loader, no squidpy)
 - **Goal:** Reproduce M1/M2 analyses; side-by-side comparison with Allen data for overlapping genes
 
 ### Milestone 4 — Zhuang (`04_zhuang_crossref.ipynb`)
@@ -520,7 +519,7 @@ See [`cursor_handover.md`](cursor_handover.md) for implementation sketches and A
 3. **MERFISH panel coverage** — Only ~500 genes measured; many receptors require imputed matrix or scRNA-only analysis.
 4. **Per-gene MERFISH I/O** — Loading N genes opens the h5ad N times; slow for full 50-gene panel.
 5. **Config vs notebook outputs** — Saved notebook outputs may reflect an older narrowed config; re-execute after YAML edits.
-6. **M3/M4 not implemented** — No Vizgen loaders in `src/data_loaders.py` yet.
+6. **Vizgen label transfer is approximate** — Vizgen cells get Allen `supertype` and CCF `brain_area` via kNN on overlapping genes, not native Vizgen annotations.
 7. **figures/ in repo** — PNGs gitignored; `data/aggregated_scrna.parquet` may contain stale single-gene results until re-run.
 
 ---

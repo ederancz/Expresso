@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
+from matplotlib.transforms import blended_transform_factory
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -81,6 +82,13 @@ def _figsize(config: dict[str, Any], key: str, default: tuple[float, float]) -> 
     return (float(val[0]), float(val[1]))
 
 
+def _gene_family(gene: str, genes_flat: dict[str, str]) -> str:
+    """Resolve receptor family for a gene symbol (handles ``*`` imputed suffix)."""
+    if gene.endswith(IMPUTED_GENE_MARKER):
+        gene = gene[: -len(IMPUTED_GENE_MARKER)]
+    return genes_flat.get(gene, "unknown")
+
+
 def _receptor_family_spans(
     genes: list[str],
     genes_flat: dict[str, str],
@@ -89,9 +97,9 @@ def _receptor_family_spans(
     spans: list[tuple[str, int, int]] = []
     idx = 0
     while idx < len(genes):
-        family = genes_flat.get(genes[idx], "unknown")
+        family = _gene_family(genes[idx], genes_flat)
         start = idx
-        while idx < len(genes) and genes_flat.get(genes[idx]) == family:
+        while idx < len(genes) and _gene_family(genes[idx], genes_flat) == family:
             idx += 1
         spans.append((family, start, idx - 1))
     return spans
@@ -122,62 +130,59 @@ def _plot_combined_receptor_heatmap(
     display_genes = _combined_heatmap_gene_labels(genes, config)
     spans = _receptor_family_spans(genes, config["_genes_flat"])
 
-    # Extra headroom for vertically oriented family abbreviations.
-    top_ratio = max(4.0, min(7.0, 2.5 + 0.12 * len(spans)))
-    fig = plt.figure(figsize=figsize)
-    gs = fig.add_gridspec(
-        nrows=2,
-        ncols=1,
-        height_ratios=[top_ratio, 14],
-        hspace=0.06,
-    )
-    ax_hm = fig.add_subplot(gs[1])
-    ax_groups = fig.add_subplot(gs[0], sharex=ax_hm)
-    ax_groups.tick_params(labelbottom=False)
+    # Headroom above heatmap for family brackets (drawn on same axes as heatmap so
+    # the colorbar does not shift brackets relative to columns).
+    top_inches = max(0.45, min(1.2, 0.08 + 0.012 * len(spans)))
+    fig_h = figsize[1] + top_inches
+    fig, ax = plt.subplots(figsize=(figsize[0], fig_h))
+    fig.subplots_adjust(top=1.0 - top_inches / fig_h)
 
     data = mat.astype(float)
     values = data.to_numpy()
     mask = ~np.isfinite(values) if not np.isfinite(values).all() else None
     sns.heatmap(
         data,
-        ax=ax_hm,
+        ax=ax,
         cmap=cmap,
         mask=mask,
-        cbar_kws={"label": "log2(CPM+1)"},
+        cbar_kws={"label": "log2(CPM+1)", "shrink": 0.55},
         xticklabels=display_genes,
         yticklabels=True,
     )
-    ax_hm.set_xlabel("Receptor")
-    ax_hm.set_ylabel(config["cell_type_level"])
-    ax_hm.tick_params(axis="x", labelrotation=90, labelsize=7)
-    ax_hm.tick_params(axis="y", labelsize=7)
+    ax.set_xlabel("Receptor")
+    ax.set_ylabel(config["cell_type_level"])
+    ax.tick_params(axis="x", labelrotation=90, labelsize=7)
+    ax.tick_params(axis="y", labelsize=7)
 
-    ax_groups.set_ylim(0, 1)
-    ax_groups.axis("off")
+    # Brackets in data-x / axes-y space — aligns with heatmap columns including colorbar inset.
+    trans = blended_transform_factory(ax.transData, ax.transAxes)
+    bracket_lo, bracket_hi, text_y = 1.01, 1.045, 1.055
     for family, start, end in spans:
-        x_left, x_right = start, end + 1
-        cx = (x_left + x_right) / 2
+        x_left, x_right = float(start), float(end + 1)
+        cx = (x_left + x_right) / 2.0
         label = _family_abbrev(family)
-        ax_groups.plot(
+        ax.plot(
             [x_left, x_left, x_right, x_right],
-            [0.04, 0.14, 0.14, 0.04],
+            [bracket_lo, bracket_hi, bracket_hi, bracket_lo],
+            transform=trans,
             color="0.25",
             lw=1.0,
             clip_on=False,
+            solid_capstyle="butt",
         )
-        ax_groups.text(
+        ax.text(
             cx,
-            0.18,
+            text_y,
             label,
+            transform=trans,
             ha="center",
             va="bottom",
-            rotation=90,
-            fontsize=6,
+            fontsize=7,
             fontweight="bold",
             clip_on=False,
         )
 
-    fig.suptitle(title, y=0.995)
+    fig.suptitle(title, y=1.0 - 0.15 * top_inches / fig_h)
     path = Path(save_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=dpi, bbox_inches="tight", pad_inches=0.12)
@@ -530,7 +535,7 @@ def plot_crossref_scatter(
         merged["allen_expression"],
         merged[other_expression_col],
     )
-    spearman_r, _ = stats.spearsonr(
+    spearman_r, _ = stats.spearmanr(
         merged["allen_expression"],
         merged[other_expression_col],
     )
