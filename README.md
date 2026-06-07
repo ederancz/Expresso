@@ -46,7 +46,7 @@ Edit [`receptor_query_config.yaml`](receptor_query_config.yaml) for genes and br
 | Notebook | Description |
 |----------|-------------|
 | [`notebooks/01_scrna_heatmaps.ipynb`](notebooks/01_scrna_heatmaps.ipynb) | WMB-10Xv3 heatmaps by cell type × brain area |
-| [`notebooks/02_merfish_spatial.ipynb`](notebooks/02_merfish_spatial.ipynb) | MERFISH spatial maps (CCF coordinates) |
+| [`notebooks/02_merfish_spatial.ipynb`](notebooks/02_merfish_spatial.ipynb) | MERFISH heatmaps (cell type × CCF brain area) |
 | `notebooks/03_vizgen_crossref.ipynb` | TODO — Milestone 3 |
 | `notebooks/04_zhuang_crossref.ipynb` | TODO — Milestone 4 |
 

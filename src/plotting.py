@@ -11,7 +11,11 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from scipy import stats
+
 from src.config import get_figures_dir
+
+IMPUTED_GENE_MARKER = "*"
 
 _PROJECTION_AXES = {
     "coronal": ("x_ccf", "y_ccf"),
@@ -47,6 +51,17 @@ def _receptor_family_spans(
     return spans
 
 
+def _combined_heatmap_gene_labels(
+    genes: list[str],
+    config: dict[str, Any],
+) -> list[str]:
+    """Column labels; imputed Allen genes get a trailing asterisk when configured."""
+    sources: dict[str, str] = config.get("_allen_gene_sources") or {}
+    if not sources:
+        return genes
+    return [format_gene_label(g, sources.get(g, "measured")) for g in genes]
+
+
 def _plot_combined_receptor_heatmap(
     mat: pd.DataFrame,
     config: dict[str, Any],
@@ -58,6 +73,7 @@ def _plot_combined_receptor_heatmap(
     cmap = config["output"].get("heatmap_cmap", "viridis")
     dpi = config["output"].get("dpi", 150)
     genes = list(mat.columns)
+    display_genes = _combined_heatmap_gene_labels(genes, config)
     spans = _receptor_family_spans(genes, config["_genes_flat"])
 
     fig = plt.figure(figsize=figsize)
@@ -74,7 +90,7 @@ def _plot_combined_receptor_heatmap(
         cmap=cmap,
         mask=mask,
         cbar_kws={"label": "log2(CPM+1)"},
-        xticklabels=True,
+        xticklabels=display_genes,
         yticklabels=True,
     )
     ax_hm.set_xlabel("Receptor")
@@ -186,6 +202,27 @@ def _scrna_heatmap_subtitle(config: dict[str, Any]) -> str:
     return f" [{'; '.join(parts)} — not distinguishable in scRNA]"
 
 
+def format_gene_label(gene: str, source: str = "measured") -> str:
+    """Append asterisk for imputed (non-measured) Allen MERFISH genes."""
+    if source == "imputed":
+        return f"{gene}{IMPUTED_GENE_MARKER}"
+    return gene
+
+
+def _modality_heatmap_subtitle(config: dict[str, Any]) -> str:
+    mod = config.get("_dataset_modality")
+    if mod == "zhuang":
+        n = len(config.get("_zhuang_replicates_used") or [])
+        return f" [Zhuang MERFISH, {n} replicates (mean), CCF parcellation]"
+    if mod == "merfish":
+        return " [Allen MERFISH, CCF parcellation]"
+    return ""
+
+
+def _merfish_heatmap_subtitle(config: dict[str, Any]) -> str:
+    return _modality_heatmap_subtitle(config)
+
+
 def plot_family_heatmap(
     family: str,
     gene_matrix: pd.DataFrame,
@@ -198,7 +235,11 @@ def plot_family_heatmap(
     out = figures_dir / f"heatmap_{family}.png"
     plot_heatmap(
         gene_matrix,
-        title=f"{family} receptors — mean log2(CPM+1){_scrna_heatmap_subtitle(config)}",
+        title=(
+            f"{family} receptors — mean log2(CPM+1)"
+            f"{_merfish_heatmap_subtitle(config)}"
+            f"{_scrna_heatmap_subtitle(config)}"
+        ),
         config=config,
         save_path=out,
         base_dir=base_dir,
@@ -232,6 +273,7 @@ def plot_combined_heatmap(
         config,
         title=(
             f"All {level}s × receptors — mean log2(CPM+1)"
+            f"{_merfish_heatmap_subtitle(config)}"
             f"{_cell_type_filter_subtitle(config)}"
             f"{_scrna_heatmap_subtitle(config)}"
         ),
@@ -368,3 +410,134 @@ def plot_family_spatial_panel(
     fig.savefig(out, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     return out
+
+
+def plot_crossref_scatter(
+    merged: pd.DataFrame,
+    config: dict[str, Any],
+    *,
+    title: str,
+    save_path: Path | str,
+    color_by: str = "brain_area",
+) -> None:
+    """
+    Scatter Allen MERFISH vs Zhuang mean expression.
+
+    Imputed Allen genes are drawn with hollow markers; measured use filled circles.
+    """
+    if merged.empty:
+        warnings.warn(f"Skipping empty cross-reference plot: {title}", UserWarning, stacklevel=2)
+        return
+
+    dpi = config["output"].get("dpi", 150)
+    figsize = _figsize(config, "figsize_heatmap", (14, 8))
+
+    fig, ax = plt.subplots(figsize=figsize)
+    areas = sorted(merged[color_by].dropna().unique())
+    palette = sns.color_palette("tab10", n_colors=max(len(areas), 1))
+    area_colors = dict(zip(areas, palette))
+
+    for area in areas:
+        sub = merged[merged[color_by] == area]
+        for source, marker, facecolors in (
+            ("measured", "o", "auto"),
+            ("imputed", "o", "none"),
+        ):
+            pts = sub[sub["allen_source"] == source]
+            if pts.empty:
+                continue
+            ax.scatter(
+                pts["allen_expression"],
+                pts["zhuang_expression"],
+                c=[area_colors[area]],
+                label=f"{area}" if source == "measured" else None,
+                s=28 if source == "measured" else 40,
+                alpha=0.75,
+                marker=marker,
+                edgecolors=[area_colors[area]] if source == "imputed" else "none",
+                linewidths=0.8 if source == "imputed" else 0,
+            )
+
+    pearson_r, pearson_p = stats.pearsonr(
+        merged["allen_expression"],
+        merged["zhuang_expression"],
+    )
+    spearman_r, _ = stats.spearmanr(
+        merged["allen_expression"],
+        merged["zhuang_expression"],
+    )
+
+    lim_lo = float(
+        min(merged["allen_expression"].min(), merged["zhuang_expression"].min()),
+    )
+    lim_hi = float(
+        max(merged["allen_expression"].max(), merged["zhuang_expression"].max()),
+    )
+    pad = (lim_hi - lim_lo) * 0.05 or 0.1
+    lims = (lim_lo - pad, lim_hi + pad)
+    ax.plot(lims, lims, "k--", alpha=0.35, linewidth=1, zorder=0)
+    ax.set_xlim(lims)
+    ax.set_ylim(lims)
+
+    n_imputed = int((merged["allen_source"] == "imputed").sum())
+    imputed_note = (
+        f"; hollow = imputed Allen ({n_imputed} points)"
+        if n_imputed
+        else ""
+    )
+    ax.set_xlabel("Allen MERFISH — mean log2(CPM+1)")
+    ax.set_ylabel("Zhuang MERFISH — mean log2(CPM+1)")
+    ax.set_title(
+        f"{title}\n"
+        f"n={len(merged)} cell_type×region×gene; "
+        f"r={pearson_r:.3f} (p={pearson_p:.2g}), "
+        f"ρ={spearman_r:.3f}{imputed_note}",
+        fontsize=11,
+    )
+    ax.set_aspect("equal", adjustable="box")
+    if areas:
+        ax.legend(title=color_by, bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
+
+    path = Path(save_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_crossref_family_scatters(
+    merged: pd.DataFrame,
+    config: dict[str, Any],
+    output_dir: Path | str | None = None,
+) -> list[Path]:
+    """Save overall and per-family Allen vs Zhuang correlation scatter plots."""
+    figures_dir = get_figures_dir(config, output_dir=output_dir)
+    saved: list[Path] = []
+
+    overall = figures_dir / "crossref_allen_zhuang.png"
+    plot_crossref_scatter(
+        merged,
+        config,
+        title="Allen MERFISH vs Zhuang MERFISH",
+        save_path=overall,
+    )
+    saved.append(overall)
+
+    for family in config["_families"]:
+        sub = merged[merged["family"] == family]
+        if sub.empty:
+            warnings.warn(
+                f"No cross-reference data for family {family!r}; skipping scatter.",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+        out = figures_dir / f"crossref_allen_zhuang_{family}.png"
+        plot_crossref_scatter(
+            sub,
+            config,
+            title=f"Allen vs Zhuang — {family}",
+            save_path=out,
+        )
+        saved.append(out)
+
+    return saved

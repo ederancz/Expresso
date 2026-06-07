@@ -240,3 +240,64 @@ def get_expression_suffix(cfg: dict[str, Any]) -> str:
     if unit not in ("log2", "raw"):
         raise ValueError(f"expression_unit must be 'log2' or 'raw', got {unit!r}")
     return unit
+
+
+DEFAULT_ZHUANG_DATASETS = (
+    "Zhuang-ABCA-1",
+    "Zhuang-ABCA-2",
+    "Zhuang-ABCA-3",
+    "Zhuang-ABCA-4",
+)
+
+
+def get_zhuang_datasets(cfg: dict[str, Any]) -> list[str]:
+    """Return Zhuang replicate dataset IDs from config (default: all four)."""
+    raw = cfg.get("data", {}).get("zhuang_datasets")
+    if raw is None:
+        return list(DEFAULT_ZHUANG_DATASETS)
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("data.zhuang_datasets must be a non-empty list of dataset IDs")
+    return [str(d) for d in raw]
+
+
+def find_prior_run_parquet(
+    cfg: dict[str, Any],
+    *,
+    parquet_filename: str,
+    dataset_slug: str,
+    exploration_root: Path | str | None = None,
+) -> Path | None:
+    """
+    Find the most recent prior run parquet under the exploration root.
+
+    Matches run folders named ``{timestamp}_{cell_type_level}_{dataset_slug}``
+    (same convention as :func:`start_run`).
+    """
+    explicit = cfg.get("data", {}).get("allen_merfish_parquet")
+    if explicit:
+        path = Path(explicit).expanduser()
+        if path.is_file():
+            return path.resolve()
+
+    root = resolve_output_dir(
+        output_dir=exploration_root,
+        cfg=cfg if exploration_root is None else None,
+    )
+    level = cfg["cell_type_level"]
+    suffix = f"_{level}_{_sanitize_run_slug(dataset_slug)}"
+
+    candidates: list[Path] = []
+    if not root.is_dir():
+        return None
+
+    for run_dir in root.iterdir():
+        if not run_dir.is_dir() or not run_dir.name.endswith(suffix):
+            continue
+        parquet = run_dir / parquet_filename
+        if parquet.is_file():
+            candidates.append(parquet)
+
+    if not candidates:
+        return None
+
+    return sorted(candidates, key=lambda p: p.parent.name, reverse=True)[0]

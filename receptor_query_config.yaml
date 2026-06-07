@@ -9,22 +9,22 @@
 
 receptors: #full list on 07 July 2026 via Claude
   glutamate:
-    - Grin1    # from here NMDA_ionotropic
-    - Grin2a
-    - Grin2b
-    - Grin2c
-    - Grin2d
-    - Grin3a
-    - Grin3b
-    - Gria1    # from here AMPA_ionotropic
-    - Gria2
-    - Gria3
-    - Gria4
-    - Grik1    # from here kainate_ionotropic
-    - Grik2
-    - Grik3
-    - Grik4
-    - Grik5
+    # - Grin1    # from here NMDA_ionotropic
+    # - Grin2a
+    # - Grin2b
+    # - Grin2c
+    # - Grin2d
+    # - Grin3a
+    # - Grin3b
+    # - Gria1    # from here AMPA_ionotropic
+    # - Gria2
+    # - Gria3
+    # - Gria4
+    # - Grik1    # from here kainate_ionotropic
+    # - Grik2
+    # - Grik3
+    # - Grik4
+    # - Grik5
     - Grm1     # from here metabotropic (Group I)
     - Grm5
     - Grm2     # from here metabotropic (Group II)
@@ -35,25 +35,25 @@ receptors: #full list on 07 July 2026 via Claude
     - Grm8
 
   gaba:
-    - Gabra1   # from here GABAA_ionotropic
-    - Gabra2
-    - Gabra3
-    - Gabra4
-    - Gabra5
-    - Gabra6
-    - Gabrb1
-    - Gabrb2
-    - Gabrb3
-    - Gabrg1
-    - Gabrg2
-    - Gabrg3
-    - Gabrd
-    - Gabre
-    - Gabrp
-    - Gabrq
-    - Gabrr1
-    - Gabrr2
-    - Gabrr3
+    # - Gabra1   # from here GABAA_ionotropic
+    # - Gabra2
+    # - Gabra3
+    # - Gabra4
+    # - Gabra5
+    # - Gabra6
+    # - Gabrb1
+    # - Gabrb2
+    # - Gabrb3
+    # - Gabrg1
+    # - Gabrg2
+    # - Gabrg3
+    # - Gabrd
+    # - Gabre
+    # - Gabrp
+    # - Gabrq
+    # - Gabrr1
+    # - Gabrr2
+    # - Gabrr3
     - Gabbr1   # from here GABAB_metabotropic
     - Gabbr2
 
@@ -292,7 +292,7 @@ brain_areas:
 # Choose the level of the Allen taxonomy hierarchy to group by.
 # Options: class | subclass | supertype | cluster
 # -------------------------------------------------------------------
-cell_type_level: cluster
+cell_type_level: supertype
 
 # Optional loose filter: keep cell types whose name contains any substring below.
 # Use [] or omit to include all types at cell_type_level.
@@ -322,3 +322,10 @@ data:
   expression_unit: log2                 # raw | log2 (log2(CPM+1))
   merfish_dataset: MERFISH-C57BL6J-638850
   vizgen_data_dir: null                 # set to local path if Vizgen files already downloaded
+  # Milestone 4 — Zhuang MERFISH cross-reference
+  zhuang_datasets:                      # replicates to include (shared ~1,122-gene panel)
+    - Zhuang-ABCA-1
+    - Zhuang-ABCA-2
+    - Zhuang-ABCA-3
+    - Zhuang-ABCA-4
+  allen_merfish_parquet: null           # optional override; auto-discovered from exploration/ if null

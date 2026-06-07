@@ -11,9 +11,16 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from src.config import get_cache_dir, get_expression_suffix
+from src.config import (
+    find_prior_run_parquet,
+    get_cache_dir,
+    get_expression_suffix,
+    get_zhuang_datasets,
+)
 from src.utils import (
+    assign_merfish_brain_area,
     build_brain_area_mapping,
+    filter_cell_types_by_name,
     resolve_gene_ids,
     warn_missing_genes,
 )
@@ -24,6 +31,7 @@ WMB_TAXONOMY_DIR = "WMB-taxonomy"
 MERFISH_DIR = "MERFISH-C57BL6J-638850"
 MERFISH_IMPUTED_DIR = "MERFISH-C57BL6J-638850-imputed"
 MERFISH_CCF_DIR = "MERFISH-C57BL6J-638850-CCF"
+ALLEN_CCF_DIR = "Allen-CCF-2020"
 
 
 def get_abc_cache(config: dict[str, Any]) -> Any:
@@ -290,19 +298,53 @@ def family_gene_region_matrix(
     return renamed.reindex(index=cell_types, columns=display_cols)
 
 
-def load_merfish_cell_metadata(cache: Any, config: dict[str, Any]) -> pd.DataFrame:
-    """MERFISH cells with cluster annotation, section coords, and CCF coords."""
-    dataset = config["data"].get("merfish_dataset", MERFISH_DIR)
+def family_gene_region_matrix_merfish(
+    agg_long: pd.DataFrame,
+    family: str,
+    config: dict[str, Any],
+) -> pd.DataFrame:
+    """
+    Per-family MERFISH heatmap: rows=cell types, columns=config brain areas (CCF).
 
-    cell = cache.get_metadata_dataframe(
-        directory=dataset,
-        file_name="cell_metadata_with_cluster_annotation",
-        dtype={"cell_label": str},
+    Unlike scRNA, each config brain area is a separate column (no dissection pooling).
+    """
+    sub = agg_long[agg_long["family"] == family]
+    if sub.empty:
+        return pd.DataFrame()
+    mat = sub.pivot_table(
+        index="cell_type",
+        columns="brain_area",
+        values="mean_expression",
+        aggfunc="mean",
     )
-    cell = cell.set_index("cell_label")
+    cell_types = filter_cell_types_by_name(mat.index, config)
+    return mat.reindex(index=cell_types, columns=config["brain_areas"])
 
-    # Section coordinates (retained but not used for M2 plots).
-    cell = cell.rename(columns={"x": "x_section", "y": "y_section", "z": "z_section"})
+
+def _join_merfish_parcellation(
+    cache: Any,
+    cell: pd.DataFrame,
+    dataset: str,
+) -> pd.DataFrame:
+    """Attach CCF parcellation columns to MERFISH cell metadata."""
+    parc_cols = [c for c in cell.columns if c.startswith("parcellation_")]
+    if parc_cols:
+        return cell
+
+    try:
+        parc_cell = cache.get_metadata_dataframe(
+            directory=dataset,
+            file_name="cell_metadata_with_parcellation_annotation",
+            dtype={"cell_label": str},
+        )
+        parc_cell = parc_cell.set_index("cell_label")
+        parc_cols = [
+            c for c in parc_cell.columns if c.startswith("parcellation_")
+        ]
+        if parc_cols:
+            return cell.join(parc_cell[parc_cols], how="left")
+    except Exception:
+        pass
 
     ccf_coords = cache.get_metadata_dataframe(
         directory=MERFISH_CCF_DIR,
@@ -310,13 +352,61 @@ def load_merfish_cell_metadata(cache: Any, config: dict[str, Any]) -> pd.DataFra
         dtype={"cell_label": str},
     )
     ccf_coords = ccf_coords.set_index("cell_label")
-    ccf_coords = ccf_coords.rename(
-        columns={"x": "x_ccf", "y": "y_ccf", "z": "z_ccf"},
-    )
-    if "parcellation_index" in ccf_coords.columns:
-        ccf_coords = ccf_coords.drop(columns=["parcellation_index"])
+    if "parcellation_index" not in ccf_coords.columns:
+        warnings.warn(
+            "MERFISH CCF coordinates lack parcellation_index; brain areas unavailable.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return cell
 
-    cell = cell.join(ccf_coords, how="inner")
+    parc_ann = cache.get_metadata_dataframe(
+        directory=ALLEN_CCF_DIR,
+        file_name="parcellation_to_parcellation_term_membership_acronym",
+    )
+    parc_ann = parc_ann.set_index("parcellation_index")
+    parc_ann.columns = [f"parcellation_{c}" for c in parc_ann.columns]
+
+    cell = cell.join(
+        ccf_coords[["parcellation_index"]],
+        how="left",
+    )
+    return cell.join(parc_ann, on="parcellation_index", how="left")
+
+
+def load_merfish_cell_metadata(cache: Any, config: dict[str, Any]) -> pd.DataFrame:
+    """
+    MERFISH cells with taxonomy and CCF brain_area assignment.
+
+    Filtered to config brain_areas. Indexed by cell_label.
+    """
+    dataset = config["data"].get("merfish_dataset", MERFISH_DIR)
+    brain_areas = config["brain_areas"]
+    cell_type_col = config["cell_type_level"]
+
+    cell = cache.get_metadata_dataframe(
+        directory=dataset,
+        file_name="cell_metadata_with_cluster_annotation",
+        dtype={"cell_label": str},
+    )
+    cell = cell.set_index("cell_label")
+    cell = _join_merfish_parcellation(cache, cell, dataset)
+    cell["brain_area"] = assign_merfish_brain_area(cell, brain_areas)
+    cell = cell[cell["brain_area"].notna() & cell["brain_area"].isin(brain_areas)].copy()
+
+    for ba in brain_areas:
+        n = int((cell["brain_area"] == ba).sum())
+        if n == 0:
+            warnings.warn(
+                f"No MERFISH cells mapped to brain_area {ba!r}",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    if cell_type_col not in cell.columns:
+        raise KeyError(f"cell_type_level {cell_type_col!r} not in MERFISH metadata")
+
+    config["_scrna_pools"] = {}
     return cell
 
 
@@ -344,6 +434,15 @@ def _imputed_gene_symbols(cache: Any) -> set[str]:
 _imputed_panel_cache: set[str] | None = None
 
 
+def _ensure_float32_x(adata: ad.AnnData) -> ad.AnnData:
+    """Cast X to float32; scipy.sparse cannot concat float16 matrices."""
+    if hasattr(adata.X, "astype"):
+        adata.X = adata.X.astype(np.float32)
+    else:
+        adata.X = np.asarray(adata.X, dtype=np.float32)
+    return adata
+
+
 def check_gene_availability(
     cache: Any,
     gene: str,
@@ -369,6 +468,140 @@ def check_gene_availability(
     if gene in _imputed_panel_cache:
         return "imputed"
     return "missing"
+
+
+def check_merfish_genes(
+    cache: Any,
+    genes: list[str],
+    config: dict[str, Any],
+) -> dict[str, list[str]]:
+    """Classify genes as measured, imputed, or missing in MERFISH."""
+    measured: list[str] = []
+    imputed: list[str] = []
+    missing: list[str] = []
+    for gene in genes:
+        status = check_gene_availability(cache, gene, config)
+        if status == "present":
+            measured.append(gene)
+        elif status == "imputed":
+            imputed.append(gene)
+        else:
+            missing.append(gene)
+    return {"measured": measured, "imputed": imputed, "missing": missing}
+
+
+def _load_merfish_h5ad_slice(
+    cache: Any,
+    config: dict[str, Any],
+    genes: list[str],
+    cell_ids: pd.Index,
+    *,
+    imputed: bool,
+) -> ad.AnnData | None:
+    """Load a genes × cells slice from measured or imputed MERFISH matrix."""
+    if not genes:
+        return None
+
+    data_suffix = get_expression_suffix(config)
+    if imputed:
+        directory = MERFISH_IMPUTED_DIR
+        file_name = f"C57BL6J-638850-imputed/{data_suffix}"
+    else:
+        directory = config["data"].get("merfish_dataset", MERFISH_DIR)
+        file_name = f"C57BL6J-638850/{data_suffix}"
+
+    path = cache.get_file_path(directory=directory, file_name=file_name)
+    adata = ad.read_h5ad(path, backed="r")
+    try:
+        if "gene_symbol" not in adata.var.columns:
+            return None
+
+        cells_present = adata.obs_names.intersection(cell_ids)
+        if len(cells_present) == 0:
+            return None
+
+        gene_mask = adata.var["gene_symbol"].isin(genes)
+        ensembl_ids = adata.var.index[gene_mask].tolist()
+        if not ensembl_ids:
+            return None
+
+        subset = adata[cells_present, ensembl_ids].to_memory()
+        symbol_by_ensembl = dict(
+            zip(subset.var_names, subset.var["gene_symbol"].astype(str))
+        )
+        subset.var["gene_symbol"] = [
+            symbol_by_ensembl[e] for e in subset.var_names
+        ]
+        return _ensure_float32_x(subset)
+    finally:
+        adata.file.close()
+
+
+def load_merfish_expression_subset(
+    cache: Any,
+    genes: list[str],
+    cell_meta: pd.DataFrame,
+    config: dict[str, Any],
+) -> ad.AnnData | None:
+    """
+    Batch-load MERFISH expression for requested genes × filtered cells.
+
+    Measured genes come from the ~500-gene panel; imputed genes from the
+    ~8k matrix when ``use_imputed_merfish`` is enabled.
+    """
+    if not genes or cell_meta.empty:
+        return None
+
+    availability = check_merfish_genes(cache, genes, config)
+    warn_missing_genes(
+        availability["measured"] + availability["imputed"],
+        genes,
+    )
+
+    frames: list[ad.AnnData] = []
+    if availability["measured"]:
+        measured = _load_merfish_h5ad_slice(
+            cache,
+            config,
+            availability["measured"],
+            cell_meta.index,
+            imputed=False,
+        )
+        if measured is not None:
+            frames.append(measured)
+
+    if availability["imputed"]:
+        imputed = _load_merfish_h5ad_slice(
+            cache,
+            config,
+            availability["imputed"],
+            cell_meta.index,
+            imputed=True,
+        )
+        if imputed is not None:
+            frames.append(imputed)
+
+    if not frames:
+        return None
+
+    if len(frames) == 1:
+        combined = frames[0]
+    else:
+        combined = ad.concat(frames, join="outer", axis=1)
+    combined.var["source"] = [
+        "imputed" if g in availability["imputed"] else "measured"
+        for g in combined.var["gene_symbol"]
+    ]
+    return combined
+
+
+def aggregate_merfish_expression(
+    adata: ad.AnnData,
+    cell_meta: pd.DataFrame,
+    config: dict[str, Any],
+) -> pd.DataFrame:
+    """Mean expression per (cell_type_level, brain_area) for MERFISH."""
+    return aggregate_scrna_expression(adata, cell_meta, config)
 
 
 def load_single_gene_merfish(
@@ -415,3 +648,332 @@ def load_single_gene_merfish(
         return pd.Series(expr, index=adata.obs_names, name=gene), source
     finally:
         adata.file.close()
+
+
+def _join_zhuang_parcellation(
+    cache: Any,
+    cell: pd.DataFrame,
+    dataset_id: str,
+) -> pd.DataFrame:
+    """Attach CCF parcellation columns to Zhuang cell metadata."""
+    parc_cols = [c for c in cell.columns if c.startswith("parcellation_")]
+    if parc_cols:
+        return cell
+
+    try:
+        parc_cell = cache.get_metadata_dataframe(
+            directory=dataset_id,
+            file_name="cell_metadata_with_parcellation_annotation",
+            dtype={"cell_label": str},
+        )
+        parc_cell = parc_cell.set_index("cell_label")
+        parc_cols = [
+            c for c in parc_cell.columns if c.startswith("parcellation_")
+        ]
+        if parc_cols:
+            return cell.join(parc_cell[parc_cols], how="left")
+    except Exception:
+        pass
+
+    ccf_dir = f"{dataset_id}-CCF"
+    ccf_coords = cache.get_metadata_dataframe(
+        directory=ccf_dir,
+        file_name="ccf_coordinates",
+        dtype={"cell_label": str},
+    )
+    ccf_coords = ccf_coords.set_index("cell_label")
+    if "parcellation_index" not in ccf_coords.columns:
+        warnings.warn(
+            f"{ccf_dir} lacks parcellation_index; brain areas unavailable.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return cell
+
+    rename = {"x": "x_ccf", "y": "y_ccf", "z": "z_ccf"}
+    ccf_coords = ccf_coords.rename(
+        columns={k: v for k, v in rename.items() if k in ccf_coords.columns},
+    )
+
+    parc_ann = cache.get_metadata_dataframe(
+        directory=ALLEN_CCF_DIR,
+        file_name="parcellation_to_parcellation_term_membership_acronym",
+    )
+    parc_ann = parc_ann.set_index("parcellation_index")
+    parc_ann.columns = [f"parcellation_{c}" for c in parc_ann.columns]
+
+    cell = cell.join(
+        ccf_coords[["parcellation_index"] + [c for c in rename.values() if c in ccf_coords.columns]],
+        how="left",
+    )
+    return cell.join(parc_ann, on="parcellation_index", how="left")
+
+
+def load_zhuang_cell_metadata(
+    cache: Any,
+    config: dict[str, Any],
+    dataset_id: str,
+) -> pd.DataFrame:
+    """
+    Zhuang MERFISH cells with taxonomy and CCF brain_area assignment.
+
+    Filtered to config brain_areas. Indexed by cell_label.
+    """
+    brain_areas = config["brain_areas"]
+    cell_type_col = config["cell_type_level"]
+
+    cell = cache.get_metadata_dataframe(
+        directory=dataset_id,
+        file_name="cell_metadata_with_cluster_annotation",
+        dtype={"cell_label": str},
+    )
+    cell = cell.set_index("cell_label")
+    cell = _join_zhuang_parcellation(cache, cell, dataset_id)
+    cell["brain_area"] = assign_merfish_brain_area(cell, brain_areas)
+    cell = cell[cell["brain_area"].notna() & cell["brain_area"].isin(brain_areas)].copy()
+
+    for ba in brain_areas:
+        n = int((cell["brain_area"] == ba).sum())
+        if n == 0:
+            warnings.warn(
+                f"No Zhuang cells in {dataset_id!r} mapped to brain_area {ba!r}",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    if cell_type_col not in cell.columns:
+        raise KeyError(
+            f"cell_type_level {cell_type_col!r} not in Zhuang metadata for {dataset_id!r}",
+        )
+
+    return cell
+
+
+def _zhuang_gene_panel(cache: Any, dataset_id: str) -> set[str]:
+    gene_df = cache.get_metadata_dataframe(directory=dataset_id, file_name="gene")
+    return set(gene_df["gene_symbol"].astype(str))
+
+
+def check_zhuang_genes(
+    cache: Any,
+    genes: list[str],
+    dataset_id: str,
+) -> dict[str, list[str]]:
+    """Classify genes as present or missing in the Zhuang ~1,122-gene panel."""
+    panel = _zhuang_gene_panel(cache, dataset_id)
+    present = [g for g in genes if g in panel]
+    missing = [g for g in genes if g not in panel]
+    return {"present": present, "missing": missing}
+
+
+def load_zhuang_expression_subset(
+    cache: Any,
+    genes: list[str],
+    cell_meta: pd.DataFrame,
+    config: dict[str, Any],
+    dataset_id: str,
+) -> ad.AnnData | None:
+    """Batch-load Zhuang expression for requested genes × filtered cells."""
+    if not genes or cell_meta.empty:
+        return None
+
+    availability = check_zhuang_genes(cache, genes, dataset_id)
+    warn_missing_genes(availability["present"], genes)
+
+    if not availability["present"]:
+        return None
+
+    data_suffix = get_expression_suffix(config)
+    path = cache.get_file_path(
+        directory=dataset_id,
+        file_name=f"{dataset_id}/{data_suffix}",
+    )
+    adata = ad.read_h5ad(path, backed="r")
+    try:
+        if "gene_symbol" not in adata.var.columns:
+            return None
+
+        cells_present = adata.obs_names.intersection(cell_meta.index)
+        if len(cells_present) == 0:
+            return None
+
+        gene_mask = adata.var["gene_symbol"].isin(availability["present"])
+        ensembl_ids = adata.var.index[gene_mask].tolist()
+        if not ensembl_ids:
+            return None
+
+        subset = adata[cells_present, ensembl_ids].to_memory()
+        symbol_by_ensembl = dict(
+            zip(subset.var_names, subset.var["gene_symbol"].astype(str)),
+        )
+        subset.var["gene_symbol"] = [
+            symbol_by_ensembl[e] for e in subset.var_names
+        ]
+        subset.var["source"] = "measured"
+        return _ensure_float32_x(subset)
+    finally:
+        adata.file.close()
+
+
+def aggregate_zhuang_replicates_mean(
+    per_replicate: list[pd.DataFrame],
+) -> pd.DataFrame:
+    """Mean expression across Zhuang replicate-level aggregates."""
+    if not per_replicate:
+        return pd.DataFrame(
+            columns=["cell_type", "brain_area", "gene", "mean_expression", "family"],
+        )
+    if len(per_replicate) == 1:
+        return per_replicate[0].copy()
+
+    combined = pd.concat(per_replicate, ignore_index=True)
+    return (
+        combined.groupby(
+            ["cell_type", "brain_area", "gene", "family"],
+            observed=True,
+        )["mean_expression"]
+        .mean()
+        .reset_index()
+    )
+
+
+def load_zhuang_aggregated(
+    cache: Any,
+    config: dict[str, Any],
+) -> pd.DataFrame:
+    """
+    Load Zhuang expression per replicate, aggregate, then mean across replicates.
+    """
+    datasets = get_zhuang_datasets(config)
+    config["_zhuang_replicates_used"] = datasets
+
+    per_replicate: list[pd.DataFrame] = []
+    requested = list(config["_all_genes"])
+
+    for dataset_id in tqdm(datasets, desc="Zhuang replicates"):
+        availability = check_zhuang_genes(cache, requested, dataset_id)
+        loadable = availability["present"]
+        if not loadable:
+            warnings.warn(
+                f"No requested genes in Zhuang panel for {dataset_id!r}; skipping.",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+
+        cell_meta = load_zhuang_cell_metadata(cache, config, dataset_id)
+        if cell_meta.empty:
+            warnings.warn(
+                f"No Zhuang cells in config brain areas for {dataset_id!r}; skipping.",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+
+        adata = load_zhuang_expression_subset(
+            cache, loadable, cell_meta, config, dataset_id,
+        )
+        if adata is None:
+            continue
+
+        per_replicate.append(
+            aggregate_scrna_expression(adata, cell_meta, config),
+        )
+
+    if not per_replicate:
+        raise RuntimeError("No Zhuang expression data loaded for any replicate.")
+
+    return aggregate_zhuang_replicates_mean(per_replicate)
+
+
+def merfish_gene_source_map(
+    cache: Any,
+    genes: list[str],
+    config: dict[str, Any],
+) -> dict[str, str]:
+    """Map gene symbol -> 'measured' or 'imputed' for Allen MERFISH."""
+    availability = check_merfish_genes(cache, genes, config)
+    sources: dict[str, str] = {}
+    for gene in availability["measured"]:
+        sources[gene] = "measured"
+    for gene in availability["imputed"]:
+        sources[gene] = "imputed"
+    return sources
+
+
+def load_allen_merfish_aggregate(
+    cache: Any,
+    config: dict[str, Any],
+    *,
+    exploration_root: Path | str | None = None,
+) -> tuple[pd.DataFrame, Path | None, bool]:
+    """
+    Load Allen MERFISH aggregated table from a prior run parquet, or recompute.
+
+    Returns ``(agg_long, parquet_path_or_none, reran)``.
+    Emits a marked :class:`UserWarning` when re-running because no parquet was found.
+    """
+    dataset = config["data"].get("merfish_dataset", MERFISH_DIR)
+    parquet_path = find_prior_run_parquet(
+        config,
+        parquet_filename="aggregated_merfish.parquet",
+        dataset_slug=dataset,
+        exploration_root=exploration_root,
+    )
+
+    if parquet_path is not None:
+        agg = pd.read_parquet(parquet_path)
+        return agg, parquet_path, False
+
+    warnings.warn(
+        "ALLEN MERFISH RE-RUN: No prior aggregated_merfish.parquet found under the "
+        f"exploration folder for cell_type_level={config['cell_type_level']!r} and "
+        f"dataset={dataset!r}. Re-running Allen MERFISH aggregation (may download "
+        "large expression matrices). Run notebook 02 first to cache results.",
+        UserWarning,
+        stacklevel=2,
+    )
+
+    requested = list(config["_all_genes"])
+    availability = check_merfish_genes(cache, requested, config)
+    loadable = availability["measured"] + availability["imputed"]
+    if not loadable:
+        raise RuntimeError("No requested genes available in Allen MERFISH.")
+
+    cell_meta = load_merfish_cell_metadata(cache, config)
+    adata = load_merfish_expression_subset(cache, loadable, cell_meta, config)
+    if adata is None:
+        raise RuntimeError("No Allen MERFISH expression data loaded.")
+
+    agg = aggregate_merfish_expression(adata, cell_meta, config)
+    return agg, None, True
+
+
+def merge_crossref_aggregates(
+    allen_agg: pd.DataFrame,
+    zhuang_agg: pd.DataFrame,
+    allen_gene_sources: dict[str, str],
+) -> pd.DataFrame:
+    """
+    Inner-join Allen and Zhuang aggregates on cell_type × brain_area × gene.
+
+    Adds ``allen_expression``, ``zhuang_expression``, and ``allen_source``.
+    """
+    overlap = sorted(set(allen_agg["gene"]) & set(zhuang_agg["gene"]))
+    if not overlap:
+        return pd.DataFrame()
+
+    allen = allen_agg[allen_agg["gene"].isin(overlap)].rename(
+        columns={"mean_expression": "allen_expression"},
+    )
+    zhuang = zhuang_agg[zhuang_agg["gene"].isin(overlap)].rename(
+        columns={"mean_expression": "zhuang_expression"},
+    )
+    cols = ["cell_type", "brain_area", "gene", "family"]
+    merged = allen[cols + ["allen_expression"]].merge(
+        zhuang[cols + ["zhuang_expression"]],
+        on=cols,
+        how="inner",
+    )
+    merged["allen_source"] = merged["gene"].map(allen_gene_sources).fillna("unknown")
+    return merged

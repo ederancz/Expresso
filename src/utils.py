@@ -31,6 +31,16 @@ _CCF_TO_DISSECTION_ROI: dict[str, str] = {
     "DG": "HIP",
 }
 
+ALLEN_CCF_DIR = "Allen-CCF-2020"
+
+# Parcellation columns to try (finest first) when assigning MERFISH brain_area.
+_MERFISH_PARCELLATION_LEVELS = (
+    "parcellation_substructure",
+    "parcellation_structure",
+    "parcellation_division",
+    "parcellation_category",
+)
+
 # feature_matrix_label suffix -> config brain_area (WMB-10Xv3 packages).
 _PACKAGE_TO_BRAIN_AREA = {
     "CB": "CB",
@@ -47,6 +57,36 @@ _PACKAGE_TO_BRAIN_AREA = {
     "STR": "STR",
     "TH": "TH",
 }
+
+
+def assign_merfish_brain_area(
+    cell_meta: pd.DataFrame,
+    brain_areas: list[str],
+) -> pd.Series:
+    """
+    Map each MERFISH cell to a config brain_area using CCF parcellation columns.
+
+    Uses the finest parcellation level that matches any requested area.
+    """
+    area_set = set(brain_areas)
+    assigned = pd.Series(np.nan, index=cell_meta.index, dtype=object)
+    for col in _MERFISH_PARCELLATION_LEVELS:
+        if col not in cell_meta.columns:
+            continue
+        values = cell_meta[col].astype(str)
+        mask = values.isin(area_set) & assigned.isna()
+        assigned[mask] = values[mask]
+
+    if assigned.notna().any():
+        return assigned
+
+    warnings.warn(
+        "Could not assign MERFISH brain_area from parcellation columns; "
+        f"expected one of {_MERFISH_PARCELLATION_LEVELS}",
+        UserWarning,
+        stacklevel=2,
+    )
+    return pd.Series(np.nan, index=cell_meta.index, dtype=object)
 
 
 def resolve_gene_ids(
