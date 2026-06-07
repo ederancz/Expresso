@@ -6,63 +6,252 @@
 # Use official mouse gene symbols (ENSMUSG... or Hgnc-style short names).
 # These are loaded at runtime; the notebook never hard-codes gene names.
 # -------------------------------------------------------------------
-receptors:
-  dopamine:
-    - Drd1
-    - Drd2
-    - Drd3
-    - Drd4
-    - Drd5
-  serotonin:
-    - Htr1a
-    - Htr1b
-    - Htr2a
-    - Htr2c
-    - Htr3a
-    - Htr4
-    - Htr6
-    - Htr7
+
+receptors: #full list on 07 July 2026 via Claude
   glutamate:
-    - Grin1
+    - Grin1    # from here NMDA_ionotropic
     - Grin2a
     - Grin2b
-    - Grm1
+    - Grin2c
+    - Grin2d
+    - Grin3a
+    - Grin3b
+    - Gria1    # from here AMPA_ionotropic
+    - Gria2
+    - Gria3
+    - Gria4
+    - Grik1    # from here kainate_ionotropic
+    - Grik2
+    - Grik3
+    - Grik4
+    - Grik5
+    - Grm1     # from here metabotropic (Group I)
     - Grm5
+    - Grm2     # from here metabotropic (Group II)
+    - Grm3
+    - Grm4     # from here metabotropic (Group III)
+    - Grm6
+    - Grm7
+    - Grm8
+
   gaba:
-    - Gabra1
+    - Gabra1   # from here GABAA_ionotropic
     - Gabra2
+    - Gabra3
+    - Gabra4
+    - Gabra5
+    - Gabra6
+    - Gabrb1
     - Gabrb2
+    - Gabrb3
+    - Gabrg1
     - Gabrg2
-  opioid:
-    - Oprm1
-    - Oprd1
-    - Oprk1
-  cannabinoid:
-    - Cnr1
-    - Cnr2
+    - Gabrg3
+    - Gabrd
+    - Gabre
+    - Gabrp
+    - Gabrq
+    - Gabrr1
+    - Gabrr2
+    - Gabrr3
+    - Gabbr1   # from here GABAB_metabotropic
+    - Gabbr2
+
+  glycine:
+    - Glra1    # from here ionotropic (GlyR); primary expression brainstem/spinal cord; Glra2/Glrb detectable in cortex/thalamus
+    - Glra2
+    - Glra3
+    - Glra4
+    - Glrb
+
+  dopamine:
+    - Drd1     # from here D1-like (Gs-coupled)
+    - Drd5
+    - Drd2     # from here D2-like (Gi-coupled)
+    - Drd3
+    - Drd4
+
+  serotonin:
+    - Htr1a    # from here 5-HT1 family (Gi-coupled)
+    - Htr1b
+    - Htr1d
+    - Htr1f
+    - Htr2a    # from here 5-HT2 family (Gq-coupled)
+    - Htr2b
+    - Htr2c
+    - Htr3a    # from here 5-HT3 (ionotropic, ligand-gated cation channel)
+    - Htr3b
+    - Htr4     # from here 5-HT4/5/6/7 (Gs or Gi-coupled)
+    - Htr5a
+    - Htr5b
+    - Htr6
+    - Htr7
+
+  noradrenaline:
+    - Adra1a   # from here alpha-1 (Gq-coupled)
+    - Adra1b
+    - Adra1d
+    - Adra2a   # from here alpha-2 (Gi-coupled); Adra2a dominant presynaptic autoreceptor in cortex
+    - Adra2b
+    - Adra2c
+    - Adrb1    # from here beta (Gs-coupled)
+    - Adrb2
+    - Adrb3
+
   acetylcholine:
-    - Chrm1
+    - Chrm1    # from here muscarinic (GPCRs); Chrm1 dominant in cortex
     - Chrm2
     - Chrm3
     - Chrm4
     - Chrm5
-    - Chrna2
+    - Chrna2   # from here neuronal nicotinic (ionotropic); alpha subunits
     - Chrna3
     - Chrna4
+    - Chrna5
+    - Chrna6
     - Chrna7
-    - Chrnb2
+    - Chrna9
+    - Chrna10
+    - Chrnb2   # from here neuronal nicotinic beta subunits
+    - Chrnb3
     - Chrnb4
-  adrenergic:
-    - Adra1a
-    - Adra1b
-    - Adra1d
-    - Adra2a
-    - Adra2b
-    - Adra2c
-    - Adrb1
-    - Adrb2
-    - Adrb3
+    - Chrna1   # from here muscle-type nicotinic subunits (negligible CNS expression)
+    - Chrnb1
+    - Chrng
+    - Chrnd
+    - Chrne
 
+  histamine:
+    - Hrh1     # GPCR; Hrh1/Hrh2 postsynaptic; Hrh3 presynaptic autoreceptor
+    - Hrh2
+    - Hrh3
+    - Hrh4
+
+  adenosine:
+    - Adora1   # from here P1 receptors (GPCRs); Adora1 and Adora2a dominant in CNS
+    - Adora2a
+    - Adora2b
+    - Adora3
+
+  cannabinoid:
+    - Cnr1     # GPCR; high expression in cortex and thalamus
+    - Cnr2     # low neuronal expression; mainly immune/microglia in CNS
+
+  purinergic_P2X:
+    - P2rx1    # from here ionotropic P2X (ligand-gated cation channels); P2rx4/P2rx7 most relevant CNS
+    - P2rx2
+    - P2rx3
+    - P2rx4
+    - P2rx5
+    - P2rx6
+    - P2rx7
+
+  purinergic_P2Y:
+    - P2ry1    # from here metabotropic P2Y (GPCRs); P2rx11 has no rodent ortholog
+    - P2ry2
+    - P2ry4
+    - P2ry6
+    - P2ry12   # dominant microglial receptor
+    - P2ry13
+    - P2ry14
+
+  opioid:
+    - Oprm1    # mu; GPCR (Gi-coupled)
+    - Oprd1    # delta
+    - Oprk1    # kappa
+    - Oprl1    # nociceptin/ORL1
+
+  neuropeptide_Y:
+    - Npy1r    # from here NPY/PYY/PP receptors (GPCRs)
+    - Npy2r
+    - Npy4r
+    - Npy5r
+    - Npy6r    # low/restricted CNS expression
+
+  somatostatin:
+    - Sstr1    # from here somatostatin receptors (GPCRs); Sstr2 most abundant in cortex/thalamus
+    - Sstr2
+    - Sstr3
+    - Sstr4
+    - Sstr5
+
+  CRF:
+    - Crhr1    # from here CRF/urocortin receptors (GPCRs)
+    - Crhr2
+
+  orexin_hypocretin:
+    - Hcrtr1   # from here orexin receptors (GPCRs)
+    - Hcrtr2
+
+  VIP_PACAP:
+    - Vipr1    # VPAC1; binds VIP and PACAP equally (GPCR)
+    - Vipr2    # VPAC2; binds VIP and PACAP equally
+    - Adcyap1r1 # PAC1; selective for PACAP
+
+  tachykinin:
+    - Tacr1    # NK1 receptor; primary receptor for substance P (GPCR)
+    - Tacr2    # NK2
+    - Tacr3    # NK3; primary receptor for neurokinin B
+
+  galanin:
+    - Galr1    # from here galanin receptors (GPCRs)
+    - Galr2
+    - Galr3
+
+  neurotensin:
+    - Ntsr1    # high-affinity; GPCR
+    - Ntsr2    # low-affinity
+
+  oxytocin_vasopressin:
+    - Oxtr     # oxytocin receptor (GPCR)
+    - Avpr1a   # from here vasopressin receptors (GPCRs); Avpr1a widespread CNS
+    - Avpr1b   # mainly pituitary and hippocampus
+    - Avpr2    # mainly kidney; low CNS
+
+  melanocortin:
+    - Mc1r     # from here melanocortin receptors (GPCRs); Mc3r/Mc4r principal CNS receptors
+    - Mc2r     # ACTH receptor; mainly adrenal
+    - Mc3r
+    - Mc4r
+    - Mc5r
+
+  cholecystokinin:
+    - Cckar    # CCK-A (GPCR)
+    - Cckbr    # CCK-B; dominant in brain cortex
+
+  calcitonin_CGRP:
+    - Calcr    # calcitonin receptor (GPCR); also amylin receptor component
+    - Calcrl   # calcitonin receptor-like receptor; forms CGRP/adrenomedullin receptors with RAMPs
+    - Ramp1    # from here RAMPs (single-TM chaperones that define CALCRL pharmacology)
+    - Ramp2
+    - Ramp3
+
+  bombesin:
+    - Nmbr     # neuromedin B receptor (GPCR)
+    - Grpr     # gastrin-releasing peptide receptor
+    - Brs3     # bombesin receptor subtype 3; orphan-like, hypothalamus enriched
+
+  neuropeptide_S:
+    - Npsr1    # neuropeptide S receptor (GPCR); expressed in cortex/thalamus/amygdala
+
+  neuropeptide_FF:
+    - Npffr1   # from here NPFF receptors (GPCRs); pain modulation and opioid interaction
+    - Npffr2
+
+  neuropeptide_B_W:
+    - Npbwr1   # from here neuropeptides B/W receptors (GPCRs)
+    - Npbwr2
+
+  neuromedin_U:
+    - Nmur1    # from here neuromedin U receptors (GPCRs)
+    - Nmur2
+
+  ghrelin:
+    - Ghsr     # growth hormone secretagogue receptor (GPCR); ghrelin receptor; expressed in cortex/hypothalamus
+
+  melatonin:
+    - Mtnr1a   # from here melatonin receptors (GPCRs); Mtnr1a high in SCN/thalamus
+    - Mtnr1b
 # -------------------------------------------------------------------
 # Brain areas
 # Use CCF v3 acronyms (Allen Mouse Brain Atlas parcellation).
