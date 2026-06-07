@@ -11,11 +11,17 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+from scipy.spatial import cKDTree
+
 from src.config import (
+    discover_vizgen_samples,
     find_prior_run_parquet,
     get_cache_dir,
     get_expression_suffix,
+    get_vizgen_data_dir,
+    get_vizgen_samples,
     get_zhuang_datasets,
+    vizgen_sample_file_paths,
 )
 from src.utils import (
     assign_merfish_brain_area,
@@ -951,29 +957,297 @@ def load_allen_merfish_aggregate(
 
 def merge_crossref_aggregates(
     allen_agg: pd.DataFrame,
-    zhuang_agg: pd.DataFrame,
+    other_agg: pd.DataFrame,
     allen_gene_sources: dict[str, str],
+    *,
+    other_key: str = "zhuang",
 ) -> pd.DataFrame:
     """
-    Inner-join Allen and Zhuang aggregates on cell_type × brain_area × gene.
+    Inner-join Allen and another dataset's aggregates on cell_type × brain_area × gene.
 
-    Adds ``allen_expression``, ``zhuang_expression``, and ``allen_source``.
+    Adds ``allen_expression``, ``{other_key}_expression``, and ``allen_source``.
     """
-    overlap = sorted(set(allen_agg["gene"]) & set(zhuang_agg["gene"]))
+    other_col = f"{other_key}_expression"
+    overlap = sorted(set(allen_agg["gene"]) & set(other_agg["gene"]))
     if not overlap:
         return pd.DataFrame()
 
     allen = allen_agg[allen_agg["gene"].isin(overlap)].rename(
         columns={"mean_expression": "allen_expression"},
     )
-    zhuang = zhuang_agg[zhuang_agg["gene"].isin(overlap)].rename(
-        columns={"mean_expression": "zhuang_expression"},
+    other = other_agg[other_agg["gene"].isin(overlap)].rename(
+        columns={"mean_expression": other_col},
     )
     cols = ["cell_type", "brain_area", "gene", "family"]
     merged = allen[cols + ["allen_expression"]].merge(
-        zhuang[cols + ["zhuang_expression"]],
+        other[cols + [other_col]],
         on=cols,
         how="inner",
     )
     merged["allen_source"] = merged["gene"].map(allen_gene_sources).fillna("unknown")
     return merged
+
+
+def _read_vizgen_gene_header(path: Path) -> list[str]:
+    with open(path) as f:
+        header = f.readline().strip()
+    if not header:
+        return []
+    return [c for c in header.split(",") if c]
+
+
+def _normalize_log2_cpm_plus_one(x: np.ndarray) -> np.ndarray:
+    """Raw counts -> log2(CPM+1), row-wise."""
+    arr = np.asarray(x, dtype=np.float64)
+    totals = arr.sum(axis=1, keepdims=True)
+    totals = np.where(totals <= 0, 1.0, totals)
+    cpm = arr / totals * 1e6
+    return np.log2(cpm + 1.0)
+
+
+def _knn_majority_labels(
+    x_ref: np.ndarray,
+    y_ref: np.ndarray,
+    x_query: np.ndarray,
+    *,
+    k: int,
+) -> np.ndarray:
+    """Assign labels by majority vote among *k* nearest reference neighbours."""
+    if len(x_ref) == 0:
+        raise ValueError("Reference matrix is empty")
+
+    k_eff = min(k, len(x_ref))
+    tree = cKDTree(x_ref)
+    _, indices = tree.query(x_query, k=k_eff)
+    if k_eff == 1:
+        indices = np.asarray(indices).reshape(-1, 1)
+
+    labels: list[str] = []
+    y_arr = np.asarray(y_ref)
+    for row in np.asarray(indices):
+        neighbours = y_arr[row]
+        uniq, counts = np.unique(neighbours, return_counts=True)
+        labels.append(str(uniq[counts.argmax()]))
+    return np.array(labels, dtype=object)
+
+
+def _subsample_reference_cells(
+    cell_meta: pd.DataFrame,
+    max_cells: int,
+    stratify_cols: list[str],
+) -> pd.Index:
+    """Stratified subsample of reference cell indices (cap at ``max_cells``)."""
+    if len(cell_meta) <= max_cells:
+        return cell_meta.index
+
+    groups = cell_meta.groupby(stratify_cols, observed=True)
+    n_groups = max(len(groups), 1)
+    per_group = max(1, max_cells // n_groups)
+    parts: list[pd.Index] = []
+    for _, group in groups:
+        idx = group.index
+        if len(idx) <= per_group:
+            parts.append(idx)
+        else:
+            parts.append(idx.to_series().sample(n=per_group, random_state=0).index)
+    sampled = pd.Index(np.concatenate([p.to_numpy() for p in parts])).unique()
+    if len(sampled) > max_cells:
+        sampled = sampled.to_series().sample(n=max_cells, random_state=0).index
+    return sampled
+
+
+def build_allen_merfish_label_reference(
+    cache: Any,
+    config: dict[str, Any],
+    transfer_genes: list[str],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str], pd.Index]:
+    """
+    Subsampled Allen MERFISH expression matrix for kNN label transfer.
+
+    Returns ``(X_ref, y_cell_type, y_brain_area, gene_order, cell_ids)``.
+    """
+    if not transfer_genes:
+        raise ValueError("No genes available for Allen MERFISH label transfer")
+
+    cell_meta = load_merfish_cell_metadata(cache, config)
+    if cell_meta.empty:
+        raise RuntimeError("No Allen MERFISH cells in config brain areas for label transfer")
+
+    data_cfg = config.get("data", {})
+    max_cells = int(data_cfg.get("vizgen_label_transfer_max_cells", 50_000))
+    cell_type_col = config["cell_type_level"]
+    stratify_cols = [cell_type_col, "brain_area"]
+
+    ref_ids = _subsample_reference_cells(cell_meta, max_cells, stratify_cols)
+    ref_meta = cell_meta.loc[ref_ids]
+
+    adata = load_merfish_expression_subset(cache, transfer_genes, ref_meta, config)
+    if adata is None:
+        raise RuntimeError("Failed to load Allen MERFISH expression for label transfer")
+
+    gene_order = adata.var["gene_symbol"].astype(str).tolist()
+    x = adata.X.toarray() if hasattr(adata.X, "toarray") else np.asarray(adata.X)
+    y_type = ref_meta.loc[adata.obs_names, cell_type_col].astype(str).to_numpy()
+    y_area = ref_meta.loc[adata.obs_names, "brain_area"].astype(str).to_numpy()
+    return x, y_type, y_area, gene_order, adata.obs_names
+
+
+def transfer_allen_merfish_labels(
+    adata: ad.AnnData,
+    x_ref: np.ndarray,
+    y_type: np.ndarray,
+    y_area: np.ndarray,
+    gene_order: list[str],
+    config: dict[str, Any],
+) -> ad.AnnData:
+    """Assign Allen ``cell_type_level`` and ``brain_area`` to Vizgen cells via kNN."""
+    missing = [g for g in gene_order if g not in adata.var_names]
+    if missing:
+        raise ValueError(
+            f"Vizgen matrix missing {len(missing)} transfer genes, e.g. {missing[:5]}",
+        )
+
+    k = int(config.get("data", {}).get("vizgen_label_transfer_k", 15))
+    cell_type_col = config["cell_type_level"]
+
+    x_query = adata[:, gene_order].X
+    if hasattr(x_query, "toarray"):
+        x_query = x_query.toarray()
+    else:
+        x_query = np.asarray(x_query)
+
+    adata = adata.copy()
+    adata.obs[cell_type_col] = _knn_majority_labels(x_ref, y_type, x_query, k=k)
+    adata.obs["brain_area"] = _knn_majority_labels(x_ref, y_area, x_query, k=k)
+    return adata
+
+
+def load_vizgen_sample(
+    config: dict[str, Any],
+    sample_tag: str,
+    genes: list[str] | None = None,
+) -> ad.AnnData:
+    """Load one Vizgen replicate as AnnData (log2(CPM+1) in ``X``)."""
+    data_dir = get_vizgen_data_dir(config)
+    cbg_path, meta_path = vizgen_sample_file_paths(data_dir, sample_tag)
+
+    panel = _read_vizgen_gene_header(cbg_path)
+    if not panel:
+        raise ValueError(f"Empty or unreadable Vizgen panel header: {cbg_path}")
+
+    if genes:
+        use_genes = [g for g in genes if g in panel]
+        warn_missing_genes(use_genes, genes)
+    else:
+        use_genes = panel
+
+    if not use_genes:
+        raise RuntimeError(f"No requested genes found in Vizgen panel for {sample_tag}")
+
+    all_cols = pd.read_csv(cbg_path, nrows=0).columns.tolist()
+    index_col = all_cols[0]
+    cols_to_read = [index_col] + [g for g in use_genes if g in all_cols]
+    expr = pd.read_csv(cbg_path, index_col=index_col, usecols=cols_to_read)
+    meta = pd.read_csv(meta_path, index_col=0)
+
+    common = expr.index.intersection(meta.index)
+    if len(common) == 0:
+        raise RuntimeError(f"No overlapping cell IDs between expression and metadata ({sample_tag})")
+
+    expr = expr.loc[common, use_genes]
+    meta = meta.loc[common]
+
+    x = _normalize_log2_cpm_plus_one(expr.to_numpy())
+    adata = ad.AnnData(
+        X=x.astype(np.float32),
+        obs=meta,
+        var=pd.DataFrame(index=use_genes),
+    )
+    adata.var["gene_symbol"] = use_genes
+    adata.obs_names = common.astype(str)
+    adata.uns["vizgen_sample"] = sample_tag
+    return adata
+
+
+def check_vizgen_genes(
+    config: dict[str, Any],
+    genes: list[str],
+    sample_tag: str | None = None,
+) -> dict[str, list[str]]:
+    """Classify genes as present or missing in the Vizgen 483-gene panel."""
+    data_dir = get_vizgen_data_dir(config)
+    if sample_tag is None:
+        samples = discover_vizgen_samples(config)
+        if not samples:
+            raise FileNotFoundError("No Vizgen samples found for gene panel check")
+        sample_tag = samples[0]
+    cbg_path, _ = vizgen_sample_file_paths(data_dir, sample_tag)
+    panel = set(_read_vizgen_gene_header(cbg_path))
+    present = [g for g in genes if g in panel]
+    missing = [g for g in genes if g not in panel]
+    return {"present": present, "missing": missing}
+
+
+def load_vizgen_aggregated(
+    cache: Any,
+    config: dict[str, Any],
+) -> pd.DataFrame:
+    """
+    Load Vizgen replicates, transfer Allen labels, filter brain areas, aggregate.
+
+    Multiple downloaded samples are averaged (mean) per cell_type × region × gene.
+    """
+    samples = get_vizgen_samples(config)
+    config["_vizgen_samples_used"] = samples
+
+    requested = list(config["_all_genes"])
+    availability = check_vizgen_genes(config, requested, samples[0])
+    loadable = availability["present"]
+    if not loadable:
+        raise RuntimeError("No requested genes in Vizgen panel.")
+
+    allen_availability = check_merfish_genes(cache, requested, config)
+    transfer_genes = sorted(
+        set(loadable)
+        & set(allen_availability["measured"] + allen_availability["imputed"]),
+    )
+    if not transfer_genes:
+        raise RuntimeError(
+            "No overlapping genes between Vizgen panel and Allen MERFISH for label transfer",
+        )
+
+    x_ref, y_type, y_area, gene_order, _ = build_allen_merfish_label_reference(
+        cache, config, transfer_genes,
+    )
+
+    brain_areas = set(config["brain_areas"])
+    cell_type_col = config["cell_type_level"]
+    per_sample: list[pd.DataFrame] = []
+
+    for sample_tag in tqdm(samples, desc="Vizgen samples"):
+        adata = load_vizgen_sample(config, sample_tag, genes=loadable)
+        adata = transfer_allen_merfish_labels(
+            adata, x_ref, y_type, y_area, gene_order, config,
+        )
+        cell_meta = adata.obs
+        in_area = cell_meta["brain_area"].isin(brain_areas)
+        if not in_area.any():
+            warnings.warn(
+                f"No Vizgen cells in {sample_tag!r} assigned to config brain_areas "
+                f"{config['brain_areas']} after label transfer; skipping sample.",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+
+        cell_meta = cell_meta.loc[in_area, [cell_type_col, "brain_area"]].copy()
+        adata = adata[in_area].copy()
+        per_sample.append(aggregate_scrna_expression(adata, cell_meta, config))
+
+    if not per_sample:
+        raise RuntimeError(
+            "No Vizgen expression aggregated for any sample; check brain_areas and "
+            "label transfer settings",
+        )
+
+    return aggregate_zhuang_replicates_mean(per_sample)

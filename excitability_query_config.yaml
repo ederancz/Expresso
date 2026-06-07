@@ -1,0 +1,221 @@
+# Excitability gene expression query configuration
+# Edit this file to control which genes and brain regions are analysed.
+# Same schema as receptor_query_config.yaml; top-level key is `excitability`.
+# If your notebook hard-codes the key `receptors`, rename the top key below.
+
+# -------------------------------------------------------------------
+# Gene list
+# Use official mouse gene symbols (ENSMUSG... or Hgnc-style short names).
+# These are loaded at runtime; the notebook never hard-codes gene names.
+#
+# Scope: neocortical pyramidal cells (interneurons excluded). Genes shaping
+# somatic & dendritic excitability: resting potential, subthreshold dynamics,
+# resonance, spike generation, repolarisation, AHPs, dendritic Na/Ca spikes.
+# Within each system, comments mark: tier (PROMINENT = strong direct evidence
+# in pyramids; PLAUSIBLE = expressed/likely, weaker support) and functional
+# subgroup. See excitability_genes.md for mechanism narrative and references.
+# -------------------------------------------------------------------
+
+excitability: #curated 07 July 2026 via Claude
+
+  # === FAMILY 1: primary membrane conductances (pore-forming alpha subunits) ===
+
+  voltage_gated_sodium:
+    - Scn2a    # PROMINENT. Nav1.2; proximal AIS + dendrites; backpropagation, INaP
+    - Scn8a    # Nav1.6; distal AIS; AP threshold, persistent + resurgent Na current
+    - Scn1a    # from here PLAUSIBLE. Nav1.1; lower in pyramids, some dendritic role
+    - Scn3a    # Nav1.3; mainly developmental, can drive INaP
+
+  voltage_gated_potassium:
+    - Kcnq2    # PROMINENT. Kv7.2; M-current with Kcnq3; threshold accommodation, resonance
+    - Kcnq3    # Kv7.3; obligate M-current partner; AIS-enriched
+    - Kcnq5    # Kv7.5; contributes to neuronal M-current
+    - Kcna1    # Kv1.1; AIS/axonal; D-type current, threshold, first-spike latency
+    - Kcna2    # Kv1.2; AIS/axonal; D-type current, dampens excitability
+    - Kcnb1    # Kv2.1; somatic delayed rectifier; high-frequency firing, Vm clustering
+    - Kcnd2    # Kv4.2; dominant somatodendritic A-type; dendritic bAP, integration
+    - Kcna4    # from here PLAUSIBLE. Kv1.4; A-type current in pyramidal dendrites
+    - Kcnb2    # Kv2.2; delayed rectifier, minor relative to Kv2.1
+    - Kcnd3    # Kv4.3; A-type current, secondary to Kv4.2 in cortex
+    - Kcnc1    # Kv3.1; fast repolarisation; lower in pyramids than fast-spikers
+    - Kcnf1    # Kv5.1; modulatory (silent) subunit of delayed rectifiers
+    - Kcng1    # Kv6.1; modulatory subunit, heteromerises with Kv2
+    - Kcns3    # Kv9.3; modulatory subunit of Kv2 channels
+    - Kcnh1    # Kv10.1 (eag1); slow K current, weak pyramidal evidence
+    - Kcnh7    # Kv11.3 (erg3); subthreshold/spike-frequency regulation
+
+  voltage_gated_calcium:
+    - Cacna1c  # PROMINENT. Cav1.2; somatodendritic L-type; plateau potentials, Ca signalling
+    - Cacna1e  # Cav2.3; R-type; dendritic Ca spikes, couples to SK in NMDA spikes
+    - Cacna1g  # Cav3.1; T-type LVA; rebound burst, subthreshold Ca, low-threshold spike
+    - Cacna1i  # Cav3.3; T-type LVA; slow subthreshold Ca, resonance contribution
+    - Cacna1d  # from here PLAUSIBLE. Cav1.3; L-type, lower-threshold, pacemaking-type
+    - Cacna1a  # Cav2.1; P/Q-type, dendritic Ca influx (mainly presynaptic)
+    - Cacna1b  # Cav2.2; N-type, dendritic Ca influx, couples to BK (mainly presynaptic)
+    - Cacna1h  # Cav3.2; T-type LVA, dendritic low-threshold Ca
+
+  hcn_pacemaker:
+    - Hcn1     # PROMINENT. HCN1; fast Ih; dominant dendritic resonance/sag, apical gradient
+    - Hcn2     # HCN2; slower cAMP-sensitive Ih; co-assembles with HCN1
+    - Hcn3     # from here PLAUSIBLE. HCN3; minor neuronal contribution
+    - Hcn4     # HCN4; slowest Ih, low cortical pyramidal expression
+
+  calcium_activated_potassium:
+    - Kcnma1   # PROMINENT. BK (Slo1); fast Ca/voltage-gated; AP repol, fast AHP, dendritic damping
+    - Kcnn2    # SK2; apamin-sensitive; medium AHP, dendritic Ca-spike & NMDA-spike tuning
+    - Kcnn1    # SK1; medium AHP contribution
+    - Kcnn3    # SK3; medium AHP contribution
+    - Kcnt1    # from here PLAUSIBLE. Slack (KNa1.1); Na-activated K, slow AHP/adaptation
+    - Kcnt2    # Slick (KNa1.2); Na-activated K, adaptation
+    - Kcnu1    # BK-related (Slo3), weak CNS evidence
+
+  inward_rectifier_and_leak:
+    - Kcnj2    # PROMINENT. Kir2.1; classical inward rectifier; resting potential, input resistance
+    - Kcnj3    # Kir3.1 (GIRK1); G-protein-gated, neuromodulatory hyperpolarisation
+    - Kcnj6    # Kir3.2 (GIRK2); dominant neuronal GIRK pore subunit
+    - Kcnk2    # TREK-1 (K2P); background leak, mechano/lipid-sensitive, sets RMP
+    - Kcnj4    # from here PLAUSIBLE. Kir2.3; inward rectifier, secondary
+    - Kcnj9    # Kir3.3 (GIRK3); GIRK heteromer component
+    - Kcnk1    # TWIK-1; background leak
+    - Kcnk3    # TASK-1; pH-sensitive leak, RMP
+    - Kcnk9    # TASK-3; pH-sensitive leak, RMP
+    - Kcnk10   # TREK-2; background leak
+
+  # === FAMILY 2: auxiliary / modulatory subunits (non-pore-forming) ===
+  # Shape kinetics, trafficking, voltage-dependence of Family 1. Easy to drop.
+
+  sodium_aux:
+    - Scn1b    # PROMINENT. Navbeta1; gating, trafficking, modulates INaP/resurgent
+    - Scn2b    # from here PLAUSIBLE. Navbeta2; trafficking, surface expression
+    - Scn3b    # Navbeta3; gating modulation
+    - Scn4b    # Navbeta4; implicated in resurgent Na current
+    - Fgf12    # iFGF (FHF1); intracellular Nav modulator, slows inactivation
+    - Fgf13    # iFGF (FHF2); intracellular Nav modulator, dendritic excitability
+    - Fgf14    # iFGF (FHF4); AIS Nav modulator, firing/excitability
+
+  potassium_aux:
+    - Kcnip2   # PROMINENT. KChIP2; Kv4.2 partner; A-current density/kinetics, gradient
+    - Dpp6     # DPPX; Kv4.2 partner; A-current voltage-dependence, recovery
+    - Kcnip1   # from here PLAUSIBLE. KChIP1; Kv4 modulation
+    - Kcnip3   # KChIP3/calsenilin; Kv4 modulation, Ca-sensing
+    - Kcnip4   # KChIP4; Kv4 modulation
+    - Dpp10    # DPP10; Kv4 partner, faster inactivation
+    - Kcnab1   # Kvbeta1; confers inactivation on Kv1 channels
+    - Kcnab2   # Kvbeta2; Kv1 trafficking/kinetics
+    - Kcne1    # MinK; modulates Kv7/KCNQ kinetics
+    - Kcne2    # MiRP1; modulates Kv7 and others
+
+  calcium_aux:
+    - Cacnb3   # PROMINENT. Cavbeta3; HVA Ca-channel trafficking/gating
+    - Cacna2d1 # Cav alpha2delta-1; HVA Ca trafficking, current density
+    - Cacnb1   # from here PLAUSIBLE. Cavbeta1; HVA Ca auxiliary
+    - Cacnb2   # Cavbeta2; HVA Ca auxiliary
+    - Cacnb4   # Cavbeta4; HVA Ca auxiliary
+    - Cacna2d2 # alpha2delta-2; HVA Ca trafficking
+    - Cacna2d3 # alpha2delta-3; HVA Ca trafficking
+    - Cacng2   # stargazin/TARP gamma-2; Ca-channel + AMPA modulation
+    - Cacng8   # TARP gamma-8; mainly AMPA trafficking, listed for completeness
+
+  hcn_aux:
+    - Pex5l    # PLAUSIBLE. TRIP8b; HCN dendritic trafficking & cAMP gating
+
+  bk_aux:
+    - Kcnmb2   # PLAUSIBLE. BKbeta2; inactivating BK, kinetics
+    - Kcnmb4   # BKbeta4; BK gating/pharmacology, dendritic spines
+    - Kcnmb1   # BKbeta1; Ca-sensitivity modulation (low neuronal)
+
+  # === FAMILY 3: Ca2+ handling & homeostasis (indirect: gate KCa & dendritic events) ===
+  # Maximalist inclusion; not membrane conductances. Drop first if scope tightens.
+
+  calcium_handling:
+    - Ryr2     # PROMINENT. ryanodine receptor 2; CICR, dendritic Ca amplification, plateaus
+    - Itpr1    # IP3 receptor 1; ER Ca release, dendritic Ca signalling
+    - Atp2b2   # PMCA2; plasma-membrane Ca extrusion, shapes transients
+    - Atp2a2   # SERCA2; ER Ca reuptake, sets transient time course
+    - Ryr1     # from here PLAUSIBLE. RyR1; CICR, lower neuronal expression
+    - Ryr3     # RyR3; CICR, dendritic
+    - Itpr2    # IP3R2; ER Ca release (more glial)
+    - Itpr3    # IP3R3; ER Ca release, minor neuronal
+    - Atp2b1   # PMCA1; Ca extrusion
+    - Slc8a1   # NCX1; Na/Ca exchanger, shapes recovery & plateaus
+    - Slc8a2   # NCX2; Na/Ca exchanger
+    - Atp2b3   # PMCA3; fast Ca extrusion
+
+  calcium_buffers:
+    - Calb1    # PLAUSIBLE. calbindin-D28k; mobile Ca buffer, dendritic Ca spread
+    - Calb2    # calretinin; mobile Ca buffer (sparse in pyramids)
+    - Calm1    # calmodulin 1; Ca sensor for channels (Cav, SK, etc.)
+    - Calm2    # calmodulin 2
+    - Calm3    # calmodulin 3
+    - Hpca     # hippocalcin; neuronal Ca sensor, links to sAHP/Kv4
+
+# -------------------------------------------------------------------
+# Brain areas
+# Use CCF v3 acronyms (Allen Mouse Brain Atlas parcellation).
+# Full names are in: https://alleninstitute.github.io/abc_atlas_access/docs/parcellation_annotations/
+# -------------------------------------------------------------------
+# brain_areas:
+#   - CTX      # Isocortex (all cortical areas)
+  # - STR      # Striatum
+  # - PAL      # Pallidum
+  # - TH       # Thalamus
+  # - HY       # Hypothalamus
+  # - MB       # Midbrain
+  # - HIP      # Hippocampal formation
+  # - AMY      # Amygdala
+  # - CB       # Cerebellum
+  # - MY       # Medulla
+
+# Optionally narrow to sub-regions (comment out brain_areas above and use these instead):
+brain_areas:
+  - VISp    # Primary visual cortex
+  - VISpm
+  - VISam
+  - RSPagl
+  # presynaptic input areas (check Allen nomenclature)
+  # - ACAv
+  # - ORBvm
+  # - LP
+  # - ATh
+  # - RSPg
+#   - MOs     # Secondary motor cortex
+#   - CP      # Caudate-putamen
+#   - ACB     # Nucleus accumbens
+#   - CA1     # Hippocampus CA1
+#   - DG      # Dentate gyrus
+
+# -------------------------------------------------------------------
+# Cell type resolution
+# Choose the level of the Allen taxonomy hierarchy to group by.
+# Options: class | subclass | supertype | cluster
+# -------------------------------------------------------------------
+cell_type_level: cluster
+
+# Optional loose filter: keep cell types whose name contains any substring below.
+# Use [] or omit to include all types at cell_type_level.
+cell_type_name_filter:
+  - "L2/3"
+  - "L5"
+
+# -------------------------------------------------------------------
+# Output settings
+# -------------------------------------------------------------------
+output:
+  # Root for figures and cached tables. Notebooks override via OUTPUT_DIR.
+  output_dir: /Users/rancze/Documents/!Projects/Ach_NE_Marius_Felix/exploration
+  dpi: 150
+  heatmap_cmap: viridis        # colormap for expression heatmaps
+  spatial_cmap: magma          # colormap for spatial expression maps
+  figsize_heatmap: [14, 8]
+  figsize_spatial: [10, 10]
+  save_processed_data: true    # cache processed gene×cell-type matrices as parquet
+
+# -------------------------------------------------------------------
+# Data access
+# -------------------------------------------------------------------
+data:
+  cache_dir: ~/abc_atlas_cache          # local path for AbcProjectCache downloads
+  use_imputed_merfish: true             # use ~8k-gene imputed matrix when gene not in 500-gene panel
+  expression_unit: log2                 # raw | log2 (log2(CPM+1))
+  merfish_dataset: MERFISH-C57BL6J-638850
+  vizgen_data_dir: null                 # set to local path if Vizgen files already downloaded

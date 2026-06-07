@@ -321,7 +321,11 @@ data:
   use_imputed_merfish: true             # use ~8k-gene imputed matrix when gene not in 500-gene panel
   expression_unit: log2                 # raw | log2 (log2(CPM+1))
   merfish_dataset: MERFISH-C57BL6J-638850
-  vizgen_data_dir: null                 # set to local path if Vizgen files already downloaded
+  # Milestone 3 — Vizgen MERFISH cross-reference
+  vizgen_data_dir: ~/vizgen_cache
+  vizgen_samples: null                 # null = all S1R1…S3R3 pairs found in vizgen_data_dir
+  vizgen_label_transfer_max_cells: 50000   # Allen MERFISH subsample for kNN label transfer
+  vizgen_label_transfer_k: 15
   # Milestone 4 — Zhuang MERFISH cross-reference
   zhuang_datasets:                      # replicates to include (shared ~1,122-gene panel)
     - Zhuang-ABCA-1

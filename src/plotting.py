@@ -17,6 +17,52 @@ from src.config import get_figures_dir
 
 IMPUTED_GENE_MARKER = "*"
 
+# Short labels for combined-heatmap receptor-family brackets (config family keys).
+_FAMILY_ABBREV: dict[str, str] = {
+    "glutamate": "Glu",
+    "gaba": "GABA",
+    "glycine": "Gly",
+    "dopamine": "DA",
+    "serotonin": "5HT",
+    "noradrenaline": "NE",
+    "acetylcholine": "ACh",
+    "histamine": "Hist",
+    "adenosine": "Ado",
+    "cannabinoid": "CB",
+    "purinergic_P2X": "P2X",
+    "purinergic_P2Y": "P2Y",
+    "opioid": "Opi",
+    "neuropeptide_Y": "NPY",
+    "somatostatin": "SST",
+    "CRF": "CRF",
+    "orexin_hypocretin": "Orex",
+    "VIP_PACAP": "VIP",
+    "tachykinin": "TK",
+    "galanin": "Gal",
+    "neurotensin": "NT",
+    "oxytocin_vasopressin": "OT/VP",
+    "melanocortin": "MC",
+    "cholecystokinin": "CCK",
+    "calcitonin_CGRP": "CGRP",
+    "bombesin": "BBS",
+    "neuropeptide_S": "NPS",
+    "neuropeptide_FF": "NPFF",
+    "neuropeptide_B_W": "NPB",
+    "neuromedin_U": "NMU",
+    "ghrelin": "Ghr",
+    "melatonin": "Mel",
+}
+
+
+def _family_abbrev(family: str) -> str:
+    """Return a short bracket label for a receptor family."""
+    if family in _FAMILY_ABBREV:
+        return _FAMILY_ABBREV[family]
+    parts = [p for p in family.split("_") if p]
+    if len(parts) >= 2:
+        return "".join(p[:2].capitalize() for p in parts)[:8]
+    return family[:6]
+
 _PROJECTION_AXES = {
     "coronal": ("x_ccf", "y_ccf"),
     "sagittal": ("z_ccf", "y_ccf"),
@@ -76,10 +122,18 @@ def _plot_combined_receptor_heatmap(
     display_genes = _combined_heatmap_gene_labels(genes, config)
     spans = _receptor_family_spans(genes, config["_genes_flat"])
 
+    # Extra headroom for vertically oriented family abbreviations.
+    top_ratio = max(4.0, min(7.0, 2.5 + 0.12 * len(spans)))
     fig = plt.figure(figsize=figsize)
-    gs = fig.add_gridspec(nrows=2, ncols=1, height_ratios=[1, 14], hspace=0.04)
-    ax_groups = fig.add_subplot(gs[0])
+    gs = fig.add_gridspec(
+        nrows=2,
+        ncols=1,
+        height_ratios=[top_ratio, 14],
+        hspace=0.06,
+    )
     ax_hm = fig.add_subplot(gs[1])
+    ax_groups = fig.add_subplot(gs[0], sharex=ax_hm)
+    ax_groups.tick_params(labelbottom=False)
 
     data = mat.astype(float)
     values = data.to_numpy()
@@ -98,33 +152,35 @@ def _plot_combined_receptor_heatmap(
     ax_hm.tick_params(axis="x", labelrotation=90, labelsize=7)
     ax_hm.tick_params(axis="y", labelsize=7)
 
-    ax_groups.set_xlim(0, len(genes))
     ax_groups.set_ylim(0, 1)
     ax_groups.axis("off")
     for family, start, end in spans:
         x_left, x_right = start, end + 1
         cx = (x_left + x_right) / 2
-        ax_groups.text(
-            cx,
-            0.55,
-            family,
-            ha="center",
-            va="center",
-            fontsize=9,
-            fontweight="bold",
-        )
+        label = _family_abbrev(family)
         ax_groups.plot(
             [x_left, x_left, x_right, x_right],
-            [0.05, 0.25, 0.25, 0.05],
+            [0.04, 0.14, 0.14, 0.04],
             color="0.25",
             lw=1.0,
             clip_on=False,
         )
+        ax_groups.text(
+            cx,
+            0.18,
+            label,
+            ha="center",
+            va="bottom",
+            rotation=90,
+            fontsize=6,
+            fontweight="bold",
+            clip_on=False,
+        )
 
-    fig.suptitle(title, y=0.99)
+    fig.suptitle(title, y=0.995)
     path = Path(save_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=dpi, bbox_inches="tight")
+    fig.savefig(path, dpi=dpi, bbox_inches="tight", pad_inches=0.12)
     plt.close(fig)
 
 
@@ -214,6 +270,13 @@ def _modality_heatmap_subtitle(config: dict[str, Any]) -> str:
     if mod == "zhuang":
         n = len(config.get("_zhuang_replicates_used") or [])
         return f" [Zhuang MERFISH, {n} replicates (mean), CCF parcellation]"
+    if mod == "vizgen":
+        samples = config.get("_vizgen_samples_used") or []
+        n = len(samples)
+        sample_note = ", ".join(samples) if n <= 3 else f"{n} samples"
+        return (
+            f" [Vizgen MERFISH, {sample_note}, Allen label transfer + kNN brain_area]"
+        )
     if mod == "merfish":
         return " [Allen MERFISH, CCF parcellation]"
     return ""
@@ -419,15 +482,20 @@ def plot_crossref_scatter(
     title: str,
     save_path: Path | str,
     color_by: str = "brain_area",
+    other_expression_col: str = "zhuang_expression",
+    other_ylabel: str = "Zhuang MERFISH — mean log2(CPM+1)",
 ) -> None:
     """
-    Scatter Allen MERFISH vs Zhuang mean expression.
+    Scatter Allen MERFISH vs another dataset mean expression.
 
     Imputed Allen genes are drawn with hollow markers; measured use filled circles.
     """
     if merged.empty:
         warnings.warn(f"Skipping empty cross-reference plot: {title}", UserWarning, stacklevel=2)
         return
+
+    if other_expression_col not in merged.columns:
+        raise KeyError(f"Cross-reference table missing column {other_expression_col!r}")
 
     dpi = config["output"].get("dpi", 150)
     figsize = _figsize(config, "figsize_heatmap", (14, 8))
@@ -448,7 +516,7 @@ def plot_crossref_scatter(
                 continue
             ax.scatter(
                 pts["allen_expression"],
-                pts["zhuang_expression"],
+                pts[other_expression_col],
                 c=[area_colors[area]],
                 label=f"{area}" if source == "measured" else None,
                 s=28 if source == "measured" else 40,
@@ -460,18 +528,18 @@ def plot_crossref_scatter(
 
     pearson_r, pearson_p = stats.pearsonr(
         merged["allen_expression"],
-        merged["zhuang_expression"],
+        merged[other_expression_col],
     )
-    spearman_r, _ = stats.spearmanr(
+    spearman_r, _ = stats.spearsonr(
         merged["allen_expression"],
-        merged["zhuang_expression"],
+        merged[other_expression_col],
     )
 
     lim_lo = float(
-        min(merged["allen_expression"].min(), merged["zhuang_expression"].min()),
+        min(merged["allen_expression"].min(), merged[other_expression_col].min()),
     )
     lim_hi = float(
-        max(merged["allen_expression"].max(), merged["zhuang_expression"].max()),
+        max(merged["allen_expression"].max(), merged[other_expression_col].max()),
     )
     pad = (lim_hi - lim_lo) * 0.05 or 0.1
     lims = (lim_lo - pad, lim_hi + pad)
@@ -486,7 +554,7 @@ def plot_crossref_scatter(
         else ""
     )
     ax.set_xlabel("Allen MERFISH — mean log2(CPM+1)")
-    ax.set_ylabel("Zhuang MERFISH — mean log2(CPM+1)")
+    ax.set_ylabel(other_ylabel)
     ax.set_title(
         f"{title}\n"
         f"n={len(merged)} cell_type×region×gene; "
@@ -495,7 +563,7 @@ def plot_crossref_scatter(
         fontsize=11,
     )
     ax.set_aspect("equal", adjustable="box")
-    if areas:
+    if areas and any(merged["allen_source"] == "measured"):
         ax.legend(title=color_by, bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8)
 
     path = Path(save_path)
@@ -508,17 +576,24 @@ def plot_crossref_family_scatters(
     merged: pd.DataFrame,
     config: dict[str, Any],
     output_dir: Path | str | None = None,
+    *,
+    file_prefix: str = "crossref_allen_zhuang",
+    other_expression_col: str = "zhuang_expression",
+    other_short_name: str = "Zhuang",
 ) -> list[Path]:
-    """Save overall and per-family Allen vs Zhuang correlation scatter plots."""
+    """Save overall and per-family Allen vs other dataset correlation scatter plots."""
     figures_dir = get_figures_dir(config, output_dir=output_dir)
     saved: list[Path] = []
+    other_ylabel = f"{other_short_name} MERFISH — mean log2(CPM+1)"
 
-    overall = figures_dir / "crossref_allen_zhuang.png"
+    overall = figures_dir / f"{file_prefix}.png"
     plot_crossref_scatter(
         merged,
         config,
-        title="Allen MERFISH vs Zhuang MERFISH",
+        title=f"Allen MERFISH vs {other_short_name} MERFISH",
         save_path=overall,
+        other_expression_col=other_expression_col,
+        other_ylabel=other_ylabel,
     )
     saved.append(overall)
 
@@ -531,13 +606,105 @@ def plot_crossref_family_scatters(
                 stacklevel=2,
             )
             continue
-        out = figures_dir / f"crossref_allen_zhuang_{family}.png"
+        out = figures_dir / f"{file_prefix}_{family}.png"
         plot_crossref_scatter(
             sub,
             config,
-            title=f"Allen vs Zhuang — {family}",
+            title=f"Allen vs {other_short_name} — {family}",
             save_path=out,
+            other_expression_col=other_expression_col,
+            other_ylabel=other_ylabel,
         )
+        saved.append(out)
+
+    return saved
+
+
+def _aligned_family_matrices(
+    allen_agg: pd.DataFrame,
+    other_agg: pd.DataFrame,
+    family: str,
+    config: dict[str, Any],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Align Allen and other family heatmap matrices to shared rows/columns."""
+    from src.data_loaders import family_gene_region_matrix_merfish
+
+    allen_mat = family_gene_region_matrix_merfish(allen_agg, family, config)
+    other_mat = family_gene_region_matrix_merfish(other_agg, family, config)
+    if allen_mat.empty or other_mat.empty:
+        return allen_mat, other_mat
+
+    rows = sorted(set(allen_mat.index) & set(other_mat.index))
+    cols = config["brain_areas"]
+    allen_aligned = allen_mat.reindex(index=rows, columns=cols)
+    other_aligned = other_mat.reindex(index=rows, columns=cols)
+    return allen_aligned, other_aligned
+
+
+def plot_crossref_side_by_side_heatmaps(
+    allen_agg: pd.DataFrame,
+    other_agg: pd.DataFrame,
+    config: dict[str, Any],
+    output_dir: Path | str | None = None,
+    *,
+    file_prefix: str = "crossref_allen_vizgen",
+    other_short_name: str = "Vizgen",
+) -> list[Path]:
+    """Side-by-side Allen vs other family heatmaps (shared cell types × brain areas)."""
+    figures_dir = get_figures_dir(config, output_dir=output_dir)
+    cmap = config["output"].get("heatmap_cmap", "viridis")
+    dpi = config["output"].get("dpi", 150)
+    saved: list[Path] = []
+
+    for family in config["_families"]:
+        allen_mat, other_mat = _aligned_family_matrices(
+            allen_agg, other_agg, family, config,
+        )
+        if allen_mat.empty or other_mat.empty:
+            warnings.warn(
+                f"No aligned data for cross-ref heatmap family {family!r}; skipping.",
+                UserWarning,
+                stacklevel=2,
+            )
+            continue
+
+        n_rows, n_cols = allen_mat.shape
+        figsize = (
+            max(12, n_cols * 2.4),
+            max(6, n_rows * 0.22),
+        )
+        fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
+
+        for ax, mat, label in (
+            (axes[0], allen_mat, "Allen MERFISH"),
+            (axes[1], other_mat, other_short_name),
+        ):
+            data = mat.astype(float)
+            values = data.to_numpy()
+            mask = ~np.isfinite(values) if not np.isfinite(values).all() else None
+            sns.heatmap(
+                data,
+                ax=ax,
+                cmap=cmap,
+                mask=mask,
+                cbar_kws={"label": "log2(CPM+1)"},
+                yticklabels=True,
+            )
+            ax.set_title(f"{label}\n{family} receptors", fontsize=10)
+            ax.set_xlabel("brain area")
+            ax.tick_params(axis="x", labelrotation=45)
+
+        axes[0].set_ylabel(config["cell_type_level"])
+        fig.suptitle(
+            f"{family} — Allen vs {other_short_name} (mean log2(CPM+1))",
+            y=1.02,
+            fontsize=12,
+        )
+        fig.tight_layout()
+
+        out = figures_dir / f"{file_prefix}_{family}.png"
+        fig.savefig(out, dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
         saved.append(out)
 
     return saved

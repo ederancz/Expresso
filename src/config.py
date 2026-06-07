@@ -250,6 +250,92 @@ DEFAULT_ZHUANG_DATASETS = (
 )
 
 
+VIZGEN_SAMPLE_TAGS = tuple(f"S{s}R{r}" for s in range(1, 4) for r in range(1, 4))
+VIZGEN_FILE_PREFIX = "datasets_mouse_brain_map_BrainReceptorShowcase"
+
+
+def get_vizgen_data_dir(cfg: dict[str, Any]) -> Path:
+    """Return expanded Vizgen flat-file directory."""
+    raw = cfg.get("data", {}).get("vizgen_data_dir")
+    if not raw:
+        raise ValueError(
+            "data.vizgen_data_dir is not set; download Vizgen CSVs and set the path "
+            "in receptor_query_config.yaml",
+        )
+    path = Path(raw).expanduser().resolve()
+    if not path.is_dir():
+        raise FileNotFoundError(f"vizgen_data_dir not found: {path}")
+    return path
+
+
+def vizgen_sample_file_paths(data_dir: Path, sample_tag: str) -> tuple[Path, Path]:
+    """
+    Return (cell_by_gene, cell_metadata) paths for a Vizgen sample tag (e.g. ``S1R1``).
+    """
+    import re
+
+    match = re.fullmatch(r"S(\d+)R(\d+)", sample_tag)
+    if not match:
+        raise ValueError(f"Invalid Vizgen sample tag {sample_tag!r}; expected e.g. 'S1R1'")
+    slice_n, rep_n = match.group(1), match.group(2)
+    prefix = VIZGEN_FILE_PREFIX
+    cbg = (
+        data_dir
+        / f"{prefix}_Slice{slice_n}_Replicate{rep_n}_cell_by_gene_{sample_tag}.csv"
+    )
+    meta = (
+        data_dir
+        / f"{prefix}_Slice{slice_n}_Replicate{rep_n}_cell_metadata_{sample_tag}.csv"
+    )
+    return cbg, meta
+
+
+def discover_vizgen_samples(cfg: dict[str, Any]) -> list[str]:
+    """List Vizgen sample tags with both cell_by_gene and cell_metadata present."""
+    data_dir = get_vizgen_data_dir(cfg)
+    found: list[str] = []
+    for tag in VIZGEN_SAMPLE_TAGS:
+        cbg, meta = vizgen_sample_file_paths(data_dir, tag)
+        if cbg.is_file() and meta.is_file():
+            found.append(tag)
+    return found
+
+
+def get_vizgen_samples(cfg: dict[str, Any]) -> list[str]:
+    """
+    Return Vizgen sample tags to process.
+
+    ``data.vizgen_samples``: explicit list (e.g. ``[S1R1, S1R2]``), or ``null`` /
+    omitted to auto-discover all downloaded pairs under ``vizgen_data_dir``.
+    """
+    raw = cfg.get("data", {}).get("vizgen_samples")
+    if raw is None:
+        samples = discover_vizgen_samples(cfg)
+        if not samples:
+            raise FileNotFoundError(
+                "No Vizgen sample CSV pairs found under "
+                f"{get_vizgen_data_dir(cfg)!r}; expected files like "
+                f"{VIZGEN_FILE_PREFIX}_Slice1_Replicate1_cell_by_gene_S1R1.csv",
+            )
+        return samples
+
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("data.vizgen_samples must be a non-empty list or null")
+
+    data_dir = get_vizgen_data_dir(cfg)
+    samples = [str(s) for s in raw]
+    missing: list[str] = []
+    for tag in samples:
+        cbg, meta = vizgen_sample_file_paths(data_dir, tag)
+        if not cbg.is_file() or not meta.is_file():
+            missing.append(tag)
+    if missing:
+        raise FileNotFoundError(
+            f"Vizgen samples missing cell_by_gene/cell_metadata: {missing}",
+        )
+    return samples
+
+
 def get_zhuang_datasets(cfg: dict[str, Any]) -> list[str]:
     """Return Zhuang replicate dataset IDs from config (default: all four)."""
     raw = cfg.get("data", {}).get("zhuang_datasets")
