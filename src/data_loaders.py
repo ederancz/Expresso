@@ -225,7 +225,8 @@ def combined_heatmap_matrix(
     config: dict[str, Any],
 ) -> pd.DataFrame:
     """
-    Combined heatmap matrix: rows=cell types, columns=receptor genes (family order).
+    Combined heatmap matrix: rows=cell types (alphabetical), columns=receptor genes
+    (family order).
 
     Expression is mean across configured brain areas per cell type × gene.
     Cell types may be narrowed via ``cell_type_name_filter`` in config.

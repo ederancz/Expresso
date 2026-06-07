@@ -31,6 +31,87 @@ def _figsize(config: dict[str, Any], key: str, default: tuple[float, float]) -> 
     return (float(val[0]), float(val[1]))
 
 
+def _receptor_family_spans(
+    genes: list[str],
+    genes_flat: dict[str, str],
+) -> list[tuple[str, int, int]]:
+    """Return (family, start_col, end_col) inclusive for genes in display order."""
+    spans: list[tuple[str, int, int]] = []
+    idx = 0
+    while idx < len(genes):
+        family = genes_flat.get(genes[idx], "unknown")
+        start = idx
+        while idx < len(genes) and genes_flat.get(genes[idx]) == family:
+            idx += 1
+        spans.append((family, start, idx - 1))
+    return spans
+
+
+def _plot_combined_receptor_heatmap(
+    mat: pd.DataFrame,
+    config: dict[str, Any],
+    title: str,
+    figsize: tuple[float, float],
+    save_path: Path | str,
+) -> None:
+    """Heatmap with cell types as rows, genes as columns, and ligand-family group labels."""
+    cmap = config["output"].get("heatmap_cmap", "viridis")
+    dpi = config["output"].get("dpi", 150)
+    genes = list(mat.columns)
+    spans = _receptor_family_spans(genes, config["_genes_flat"])
+
+    fig = plt.figure(figsize=figsize)
+    gs = fig.add_gridspec(nrows=2, ncols=1, height_ratios=[1, 14], hspace=0.04)
+    ax_groups = fig.add_subplot(gs[0])
+    ax_hm = fig.add_subplot(gs[1])
+
+    data = mat.astype(float)
+    values = data.to_numpy()
+    mask = ~np.isfinite(values) if not np.isfinite(values).all() else None
+    sns.heatmap(
+        data,
+        ax=ax_hm,
+        cmap=cmap,
+        mask=mask,
+        cbar_kws={"label": "log2(CPM+1)"},
+        xticklabels=True,
+        yticklabels=True,
+    )
+    ax_hm.set_xlabel("Receptor")
+    ax_hm.set_ylabel(config["cell_type_level"])
+    ax_hm.tick_params(axis="x", labelrotation=90, labelsize=7)
+    ax_hm.tick_params(axis="y", labelsize=7)
+
+    ax_groups.set_xlim(0, len(genes))
+    ax_groups.set_ylim(0, 1)
+    ax_groups.axis("off")
+    for family, start, end in spans:
+        x_left, x_right = start, end + 1
+        cx = (x_left + x_right) / 2
+        ax_groups.text(
+            cx,
+            0.55,
+            family,
+            ha="center",
+            va="center",
+            fontsize=9,
+            fontweight="bold",
+        )
+        ax_groups.plot(
+            [x_left, x_left, x_right, x_right],
+            [0.05, 0.25, 0.25, 0.05],
+            color="0.25",
+            lw=1.0,
+            clip_on=False,
+        )
+
+    fig.suptitle(title, y=0.99)
+    path = Path(save_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_heatmap(
     agg_df: pd.DataFrame,
     title: str,
@@ -66,7 +147,8 @@ def plot_heatmap(
             stacklevel=2,
         )
 
-    if can_cluster:
+    use_clustermap = can_cluster and (row_cluster or col_cluster)
+    if use_clustermap:
         g = sns.clustermap(
             data,
             cmap=cmap,
@@ -140,23 +222,21 @@ def plot_combined_heatmap(
     """Save heatmap_combined.png (cell types × receptor genes)."""
     figures_dir = get_figures_dir(config, base_dir, output_dir)
     out = figures_dir / "heatmap_combined.png"
-    n_cell_types, n_genes = all_genes_matrix.shape
+    mat = all_genes_matrix.sort_index()
+    n_cell_types, n_genes = mat.shape
     base = _figsize(config, "figsize_heatmap", (14, 8))
     figsize = (max(base[0], n_genes * 0.22), max(base[1], n_cell_types * 0.12))
     level = config["cell_type_level"]
-    plot_heatmap(
-        all_genes_matrix,
+    _plot_combined_receptor_heatmap(
+        mat,
+        config,
         title=(
             f"All {level}s × receptors — mean log2(CPM+1)"
             f"{_cell_type_filter_subtitle(config)}"
             f"{_scrna_heatmap_subtitle(config)}"
         ),
-        config=config,
-        save_path=out,
-        base_dir=base_dir,
-        row_cluster=True,
-        col_cluster=False,
         figsize=figsize,
+        save_path=out,
     )
     return out
 

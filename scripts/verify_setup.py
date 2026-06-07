@@ -96,6 +96,7 @@ def main() -> int:
     run_dir = start_run(
         PROJECT_ROOT,
         config,
+        dataset="WMB-10Xv3",
         exploration_root=DEFAULT_OUTPUT_DIR,
         notebook="verify_setup",
     )

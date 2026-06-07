@@ -20,6 +20,14 @@ DEFAULT_OUTPUT_DIR = Path(
 RUN_MANIFEST_NAME = "run_manifest.json"
 
 
+def _sanitize_run_slug(label: str) -> str:
+    """Filesystem-safe slug for run directory names."""
+    slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in label.strip())
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-") or "unknown"
+
+
 def load_config(path: str | Path = "receptor_query_config.yaml") -> dict[str, Any]:
     """Load YAML config and derive flattened gene lists."""
     config_path = Path(path).expanduser().resolve()
@@ -108,12 +116,15 @@ def start_run(
     project_root: Path | str,
     cfg: dict[str, Any],
     *,
+    dataset: str,
     exploration_root: Path | str | None = None,
     notebook: str | None = None,
 ) -> Path:
     """
     Create a timestamped run directory under the exploration root and write
     ``run_manifest.json`` (git repo state + ``receptor_query_config`` snapshot).
+
+    Run folder name: ``{timestamp}_{cell_type_level}_{dataset}``.
     """
     project_root = Path(project_root).resolve()
     root = resolve_output_dir(
@@ -121,9 +132,10 @@ def start_run(
         cfg=cfg if exploration_root is None else None,
     )
     level = cfg["cell_type_level"]
+    dataset_slug = _sanitize_run_slug(dataset)
     stamp = (
         datetime.now(timezone.utc).astimezone().strftime("%Y%m%d_%H%M%S")
-        + f"_{level}"
+        + f"_{level}_{dataset_slug}"
     )
     run_dir = root / stamp
     suffix = 0
@@ -139,6 +151,7 @@ def start_run(
         "run_id": run_dir.name,
         "started_at": datetime.now(timezone.utc).astimezone().isoformat(),
         "cell_type_level": level,
+        "dataset": dataset,
         "notebook": notebook,
         "exploration_root": str(root),
         "run_dir": str(run_dir.resolve()),
