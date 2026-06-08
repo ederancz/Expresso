@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
-from matplotlib.transforms import blended_transform_factory
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -17,52 +16,6 @@ from scipy import stats
 from src.config import get_figures_dir
 
 IMPUTED_GENE_MARKER = "*"
-
-# Short labels for combined-heatmap receptor-family brackets (config family keys).
-_FAMILY_ABBREV: dict[str, str] = {
-    "glutamate": "Glu",
-    "gaba": "GABA",
-    "glycine": "Gly",
-    "dopamine": "DA",
-    "serotonin": "5HT",
-    "noradrenaline": "NE",
-    "acetylcholine": "ACh",
-    "histamine": "Hist",
-    "adenosine": "Ado",
-    "cannabinoid": "CB",
-    "purinergic_P2X": "P2X",
-    "purinergic_P2Y": "P2Y",
-    "opioid": "Opi",
-    "neuropeptide_Y": "NPY",
-    "somatostatin": "SST",
-    "CRF": "CRF",
-    "orexin_hypocretin": "Orex",
-    "VIP_PACAP": "VIP",
-    "tachykinin": "TK",
-    "galanin": "Gal",
-    "neurotensin": "NT",
-    "oxytocin_vasopressin": "OT/VP",
-    "melanocortin": "MC",
-    "cholecystokinin": "CCK",
-    "calcitonin_CGRP": "CGRP",
-    "bombesin": "BBS",
-    "neuropeptide_S": "NPS",
-    "neuropeptide_FF": "NPFF",
-    "neuropeptide_B_W": "NPB",
-    "neuromedin_U": "NMU",
-    "ghrelin": "Ghr",
-    "melatonin": "Mel",
-}
-
-
-def _family_abbrev(family: str) -> str:
-    """Return a short bracket label for a receptor family."""
-    if family in _FAMILY_ABBREV:
-        return _FAMILY_ABBREV[family]
-    parts = [p for p in family.split("_") if p]
-    if len(parts) >= 2:
-        return "".join(p[:2].capitalize() for p in parts)[:8]
-    return family[:6]
 
 _PROJECTION_AXES = {
     "coronal": ("x_ccf", "y_ccf"),
@@ -80,29 +33,6 @@ _SECTION_PROJECTION_AXES = {
 def _figsize(config: dict[str, Any], key: str, default: tuple[float, float]) -> tuple[float, float]:
     val = config["output"].get(key, list(default))
     return (float(val[0]), float(val[1]))
-
-
-def _gene_family(gene: str, genes_flat: dict[str, str]) -> str:
-    """Resolve receptor family for a gene symbol (handles ``*`` imputed suffix)."""
-    if gene.endswith(IMPUTED_GENE_MARKER):
-        gene = gene[: -len(IMPUTED_GENE_MARKER)]
-    return genes_flat.get(gene, "unknown")
-
-
-def _receptor_family_spans(
-    genes: list[str],
-    genes_flat: dict[str, str],
-) -> list[tuple[str, int, int]]:
-    """Return (family, start_col, end_col) inclusive for genes in display order."""
-    spans: list[tuple[str, int, int]] = []
-    idx = 0
-    while idx < len(genes):
-        family = _gene_family(genes[idx], genes_flat)
-        start = idx
-        while idx < len(genes) and _gene_family(genes[idx], genes_flat) == family:
-            idx += 1
-        spans.append((family, start, idx - 1))
-    return spans
 
 
 def _combined_heatmap_gene_labels(
@@ -123,20 +53,12 @@ def _plot_combined_receptor_heatmap(
     figsize: tuple[float, float],
     save_path: Path | str,
 ) -> None:
-    """Heatmap with cell types as rows, genes as columns, and ligand-family group labels."""
+    """Heatmap with cell types as rows and receptor genes as columns."""
     cmap = config["output"].get("heatmap_cmap", "viridis")
     dpi = config["output"].get("dpi", 150)
-    genes = list(mat.columns)
-    display_genes = _combined_heatmap_gene_labels(genes, config)
-    spans = _receptor_family_spans(genes, config["_genes_flat"])
+    display_genes = _combined_heatmap_gene_labels(list(mat.columns), config)
 
-    # Headroom above heatmap for family brackets (drawn on same axes as heatmap so
-    # the colorbar does not shift brackets relative to columns).
-    top_inches = max(0.45, min(1.2, 0.08 + 0.012 * len(spans)))
-    fig_h = figsize[1] + top_inches
-    fig, ax = plt.subplots(figsize=(figsize[0], fig_h))
-    fig.subplots_adjust(top=1.0 - top_inches / fig_h)
-
+    fig, ax = plt.subplots(figsize=figsize)
     data = mat.astype(float)
     values = data.to_numpy()
     mask = ~np.isfinite(values) if not np.isfinite(values).all() else None
@@ -145,7 +67,7 @@ def _plot_combined_receptor_heatmap(
         ax=ax,
         cmap=cmap,
         mask=mask,
-        cbar_kws={"label": "log2(CPM+1)", "shrink": 0.55},
+        cbar_kws={"label": "log2(CPM+1)"},
         xticklabels=display_genes,
         yticklabels=True,
     )
@@ -153,39 +75,11 @@ def _plot_combined_receptor_heatmap(
     ax.set_ylabel(config["cell_type_level"])
     ax.tick_params(axis="x", labelrotation=90, labelsize=7)
     ax.tick_params(axis="y", labelsize=7)
+    ax.set_title(title)
 
-    # Brackets in data-x / axes-y space — aligns with heatmap columns including colorbar inset.
-    trans = blended_transform_factory(ax.transData, ax.transAxes)
-    bracket_lo, bracket_hi, text_y = 1.01, 1.045, 1.055
-    for family, start, end in spans:
-        x_left, x_right = float(start), float(end + 1)
-        cx = (x_left + x_right) / 2.0
-        label = _family_abbrev(family)
-        ax.plot(
-            [x_left, x_left, x_right, x_right],
-            [bracket_lo, bracket_hi, bracket_hi, bracket_lo],
-            transform=trans,
-            color="0.25",
-            lw=1.0,
-            clip_on=False,
-            solid_capstyle="butt",
-        )
-        ax.text(
-            cx,
-            text_y,
-            label,
-            transform=trans,
-            ha="center",
-            va="bottom",
-            fontsize=7,
-            fontweight="bold",
-            clip_on=False,
-        )
-
-    fig.suptitle(title, y=1.0 - 0.15 * top_inches / fig_h)
     path = Path(save_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=dpi, bbox_inches="tight", pad_inches=0.12)
+    fig.savefig(path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
 
 
