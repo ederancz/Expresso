@@ -1,6 +1,8 @@
 # Expresso — Repository Deep Dive
 
-A technical guide to the **Expresso** codebase: purpose, architecture, data flows, module APIs, configuration, and operational notes. For quick setup, see [README.md](README.md). For milestone implementation sketches aimed at development agents, see [cursor_handover.md](cursor_handover.md).
+A technical guide to the **Expresso** codebase: purpose, architecture, data flows, module APIs, configuration, and operational notes. For quick setup, see [README.md](README.md). For the most recent code/science review and the rationale behind correctness fixes, see [REVIEW.md](REVIEW.md).
+
+> **Note:** parts of this guide predate recent changes. Authoritative current behaviour: the gene panel lives under the top-level `gene_panel` key (legacy `receptors`/`excitability` still accepted) so both the receptor and excitability configs run through the same pipeline; aggregates now include `frac_expressing` and `n_cells`; cross-reference plots lead with Spearman ρ; Vizgen expression is normalised to full-panel library size; and notebook 05 performs cross-dataset synthesis. See [REVIEW.md](REVIEW.md) for details.
 
 ---
 
@@ -49,8 +51,9 @@ The project name reflects its focus: **express**ion of neurotransmitter **recept
 Expresso/
 ├── README.md                      # Quick start, setup, notebook index
 ├── REPOSITORY_GUIDE.md            # This document
-├── cursor_handover.md             # Implementation notes for AI / future milestones
-├── receptor_query_config.yaml     # Runtime config (genes, regions, output, data paths)
+├── REVIEW.md                      # Code/science review + correctness-fix rationale
+├── receptor_query_config.yaml     # Receptor panel config (genes, regions, output, data paths)
+├── excitability_query_config.yaml # Excitability ion-channel panel (same schema)
 ├── pyproject.toml                 # Package metadata (requires-python >=3.11,<3.13)
 ├── environment.yml                # Conda env (Python 3.12 + pip requirements)
 ├── requirements.txt               # Core deps (Milestones 1–3)
@@ -329,7 +332,7 @@ The full WMB-10Xv3 matrix is far too large for RAM. The code:
 - Uses **backed mode** and closes files after each package
 - Converts only the sliced subset to memory
 
-This mirrors the pattern documented in `cursor_handover.md` and Allen Institute tutorials.
+This mirrors the partial-read pattern in the Allen Institute `abc_atlas_access` tutorials.
 
 ---
 
@@ -428,10 +431,11 @@ Some notebook cells print paths under `Expresso/figures/` — that happens when 
 
 | Notebook | Status | Primary outputs |
 |----------|--------|-----------------|
-| `01_scrna_heatmaps.ipynb` | ✅ Complete | `heatmap_{family}.png`, `heatmap_combined.png`, optional parquet |
-| `02_merfish_spatial.ipynb` | ✅ Complete | `spatial_{gene}_{projection}.png`, `spatial_panel_{family}.png` |
-| `03_vizgen_crossref.ipynb` | ✅ Implemented | Vizgen heatmaps + Allen cross-ref (parquet reuse) |
-| `04_zhuang_crossref.ipynb` | 🚧 Stub | Config load + OUTPUT_DIR only |
+| `01_scrna_heatmaps.ipynb` | ✅ Complete | `heatmap_{family}.png`, `heatmap_combined.png`, `aggregated_scrna.parquet` |
+| `02_merfish_spatial.ipynb` | ✅ Complete | family + combined heatmaps, `aggregated_merfish.parquet` (spatial-scatter helpers exist in `plotting.py` but are not wired into this notebook) |
+| `03_vizgen_crossref.ipynb` | ✅ Implemented | Vizgen heatmaps + Allen cross-ref scatters/heatmaps, `aggregated_vizgen.parquet` |
+| `04_zhuang_crossref.ipynb` | ✅ Implemented | Zhuang heatmaps + Allen cross-ref scatters, `aggregated_zhuang.parquet` |
+| `05_synthesis.ipynb` | ✅ Implemented | `evidence_table.parquet`/`.csv`, focused dot plot, statement scaffold |
 
 ### Common notebook boilerplate
 
@@ -494,21 +498,26 @@ Exits with error on unsupported Python (≥3.13 or <3.11).
 
 ---
 
-## Future milestones
+## Cross-reference & synthesis milestones (implemented)
 
 ### Milestone 3 — Vizgen (`03_vizgen_crossref.ipynb`)
 
-- **Data:** Vizgen MERFISH Mouse Receptor Map (483 genes, 734k cells); flat CSV/HDF5
-- **Config:** `data.vizgen_data_dir`
-- **Deps:** same as Milestones 1–2 (`requirements.txt`; pandas CSV loader, no squidpy)
-- **Goal:** Reproduce M1/M2 analyses; side-by-side comparison with Allen data for overlapping genes
+- **Data:** Vizgen MERFISH Mouse Brain Receptor Map (~483 genes); flat CSV pairs
+- **Config:** `data.vizgen_data_dir`, `vizgen_samples`, `vizgen_label_transfer_*`
+- **Goal:** Reproduce M1/M2 analyses; side-by-side comparison with Allen for overlapping genes
+- **Note:** expression is normalised to full-panel library size (CPM); Allen labels are transferred to Vizgen cells via z-scored kNN with a recorded confidence
 
 ### Milestone 4 — Zhuang (`04_zhuang_crossref.ipynb`)
 
 - **Data:** `Zhuang-ABCA-1` … `Zhuang-ABCA-4` via same `AbcProjectCache` API
-- **Goal:** Validate Allen MERFISH patterns; correlation scatter Allen vs Zhuang per region × cell type
+- **Goal:** Validate Allen MERFISH patterns; Spearman-led correlation Allen vs Zhuang per region × cell type
 
-See [`cursor_handover.md`](cursor_handover.md) for implementation sketches and Allen tutorial links.
+### Milestone 5 — Synthesis (`05_synthesis.ipynb`)
+
+- **Module:** `src/synthesis.py`
+- **Goal:** Combine all per-dataset aggregates into one evidence table with detection
+  rates, independent-dataset concordance, and per-row confidence tiers; emit a
+  focused dot plot and statement scaffold for a target (cell_type, region)
 
 ---
 
@@ -538,11 +547,11 @@ See [`cursor_handover.md`](cursor_handover.md) for implementation sketches and A
 2. Run `01_scrna_heatmaps.ipynb` — expect long runtime and large downloads for cortical regions
 3. Run `02_merfish_spatial.ipynb` — set `use_imputed_merfish: false` first to avoid 50 GB download; enable for missing genes
 
-### Cross-dataset validation (future)
+### Cross-dataset validation
 
-1. Complete M1 + M2 on Allen data
-2. Implement M3 (Vizgen) and M4 (Zhuang) per `cursor_handover.md`
-3. Compare overlapping genes with correlation / side-by-side figures
+1. Run M1 + M2 (Allen scRNA + MERFISH); M2 caches `aggregated_merfish.parquet`
+2. Run M3 (Vizgen) and M4 (Zhuang) — they reuse the cached Allen MERFISH aggregate
+3. Run M5 (synthesis) to build the evidence table, concordance, and confidence tiers
 
 ---
 
@@ -552,7 +561,8 @@ See [`cursor_handover.md`](cursor_handover.md) for implementation sketches and A
 |----------|----------|---------|
 | [README.md](README.md) | New users | Setup, notebook list, smoke test |
 | **REPOSITORY_GUIDE.md** | Developers / analysts | Architecture, APIs, data flows, caveats |
-| [cursor_handover.md](cursor_handover.md) | Implementation agents | Milestone specs, code sketches, Allen links |
+| [REVIEW.md](REVIEW.md) | Maintainers | Code/science review, correctness-fix rationale |
+| [excitability_genes.md](excitability_genes.md) | Analysts | Excitability gene mechanisms, tiers, references |
 
 ---
 

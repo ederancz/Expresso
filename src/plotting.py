@@ -71,7 +71,7 @@ def _plot_combined_receptor_heatmap(
         xticklabels=display_genes,
         yticklabels=True,
     )
-    ax.set_xlabel("Receptor")
+    ax.set_xlabel("Gene")
     ax.set_ylabel(config["cell_type_level"])
     ax.tick_params(axis="x", labelrotation=90, labelsize=7)
     ax.tick_params(axis="y", labelsize=7)
@@ -198,7 +198,7 @@ def plot_family_heatmap(
     plot_heatmap(
         gene_matrix,
         title=(
-            f"{family} receptors — mean log2(CPM+1)"
+            f"{family} — mean log2(CPM+1)"
             f"{_merfish_heatmap_subtitle(config)}"
             f"{_scrna_heatmap_subtitle(config)}"
         ),
@@ -234,7 +234,7 @@ def plot_combined_heatmap(
         mat,
         config,
         title=(
-            f"All {level}s × receptors — mean log2(CPM+1)"
+            f"All {level}s × genes — mean log2(CPM+1)"
             f"{_merfish_heatmap_subtitle(config)}"
             f"{_cell_type_filter_subtitle(config)}"
             f"{_scrna_heatmap_subtitle(config)}"
@@ -425,14 +425,21 @@ def plot_crossref_scatter(
                 linewidths=0.8 if source == "imputed" else 0,
             )
 
-    pearson_r, pearson_p = stats.pearsonr(
-        merged["allen_expression"],
-        merged[other_expression_col],
-    )
-    spearman_r, _ = stats.spearmanr(
-        merged["allen_expression"],
-        merged[other_expression_col],
-    )
+    def _safe_corr(frame: pd.DataFrame) -> tuple[float, float, float]:
+        """Return (spearman_rho, pearson_r, pearson_p); NaN if not computable."""
+        if len(frame) < 3:
+            return float("nan"), float("nan"), float("nan")
+        a = frame["allen_expression"].to_numpy()
+        b = frame[other_expression_col].to_numpy()
+        if np.std(a) == 0 or np.std(b) == 0:
+            return float("nan"), float("nan"), float("nan")
+        rho, _ = stats.spearmanr(a, b)
+        r, p = stats.pearsonr(a, b)
+        return float(rho), float(r), float(p)
+
+    spearman_r, pearson_r, pearson_p = _safe_corr(merged)
+    measured_only = merged[merged["allen_source"] == "measured"]
+    spearman_meas, _, _ = _safe_corr(measured_only)
 
     lim_lo = float(
         min(merged["allen_expression"].min(), merged[other_expression_col].min()),
@@ -447,9 +454,18 @@ def plot_crossref_scatter(
     ax.set_ylim(lims)
 
     n_imputed = int((merged["allen_source"] == "imputed").sum())
+    n_measured = int((merged["allen_source"] == "measured").sum())
     imputed_note = (
-        f"; hollow = imputed Allen ({n_imputed} points)"
+        f"; hollow = imputed Allen ({n_imputed} pts)"
         if n_imputed
+        else ""
+    )
+    # Spearman (rank concordance) is the headline: CPM denominators differ across
+    # datasets (different panels), so absolute log2(CPM+1) is not directly
+    # comparable and Pearson/identity-line are only indicative.
+    meas_note = (
+        f"; ρ(measured-only)={spearman_meas:.3f} on n={n_measured}"
+        if n_measured and n_imputed
         else ""
     )
     ax.set_xlabel("Allen MERFISH — mean log2(CPM+1)")
@@ -457,8 +473,8 @@ def plot_crossref_scatter(
     ax.set_title(
         f"{title}\n"
         f"n={len(merged)} cell_type×region×gene; "
-        f"r={pearson_r:.3f} (p={pearson_p:.2g}), "
-        f"ρ={spearman_r:.3f}{imputed_note}",
+        f"ρ(Spearman)={spearman_r:.3f}{meas_note}; "
+        f"r(Pearson)={pearson_r:.3f} (p={pearson_p:.2g}){imputed_note}",
         fontsize=11,
     )
     ax.set_aspect("equal", adjustable="box")
@@ -589,7 +605,7 @@ def plot_crossref_side_by_side_heatmaps(
                 cbar_kws={"label": "log2(CPM+1)"},
                 yticklabels=True,
             )
-            ax.set_title(f"{label}\n{family} receptors", fontsize=10)
+            ax.set_title(f"{label}\n{family}", fontsize=10)
             ax.set_xlabel("brain area")
             ax.tick_params(axis="x", labelrotation=45)
 

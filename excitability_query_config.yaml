@@ -1,7 +1,7 @@
 # Excitability gene expression query configuration
 # Edit this file to control which genes and brain regions are analysed.
-# Same schema as receptor_query_config.yaml; top-level key is `excitability`.
-# If your notebook hard-codes the key `receptors`, rename the top key below.
+# Same schema as receptor_query_config.yaml; gene panel lives under `gene_panel`.
+# load_config also accepts the legacy keys `receptors`/`excitability`.
 
 # -------------------------------------------------------------------
 # Gene list
@@ -16,7 +16,7 @@
 # subgroup. See excitability_genes.md for mechanism narrative and references.
 # -------------------------------------------------------------------
 
-excitability: #curated 07 July 2026 via Claude
+gene_panel: #excitability panel; curated 07 July 2026 via Claude
 
   # === FAMILY 1: primary membrane conductances (pore-forming alpha subunits) ===
 

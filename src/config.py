@@ -10,8 +10,12 @@ from typing import Any
 
 import yaml
 
-_REQUIRED_KEYS = ("receptors", "brain_areas", "cell_type_level", "output", "data")
+_REQUIRED_KEYS = ("brain_areas", "cell_type_level", "output", "data")
 _VALID_CELL_TYPE_LEVELS = ("class", "subclass", "supertype", "cluster")
+
+# Accepted top-level keys holding the gene panel (family -> [gene symbols]).
+# 'gene_panel' is canonical; 'receptors'/'excitability' kept for backward compat.
+_GENE_PANEL_KEYS = ("gene_panel", "receptors", "excitability")
 
 # Default root for all notebook outputs (figures, parquet). Outside the git repo.
 DEFAULT_OUTPUT_DIR = Path(
@@ -38,6 +42,18 @@ def load_config(path: str | Path = "receptor_query_config.yaml") -> dict[str, An
         if key not in cfg:
             raise KeyError(f"Missing required config key: {key}")
 
+    panel_key = next((k for k in _GENE_PANEL_KEYS if k in cfg), None)
+    if panel_key is None:
+        raise KeyError(
+            f"Missing gene panel block; expected one of top-level keys {_GENE_PANEL_KEYS}"
+        )
+    panel = cfg[panel_key]
+    if not isinstance(panel, dict) or not panel:
+        raise TypeError(
+            f"Gene panel under {panel_key!r} must be a non-empty mapping of "
+            "family -> [gene symbols]"
+        )
+
     if cfg["cell_type_level"] not in _VALID_CELL_TYPE_LEVELS:
         raise ValueError(
             f"cell_type_level must be one of {_VALID_CELL_TYPE_LEVELS}, "
@@ -45,13 +61,15 @@ def load_config(path: str | Path = "receptor_query_config.yaml") -> dict[str, An
         )
 
     genes: dict[str, str] = {}
-    for family, glist in cfg["receptors"].items():
-        for g in glist:
+    for family, glist in panel.items():
+        for g in glist or []:
             genes[g] = family
 
+    cfg["_gene_panel"] = panel
+    cfg["_gene_panel_key"] = panel_key
     cfg["_genes_flat"] = genes
     cfg["_all_genes"] = list(genes)
-    cfg["_families"] = list(cfg["receptors"].keys())
+    cfg["_families"] = list(panel.keys())
     cfg["_config_path"] = str(config_path)
 
     raw_filter = cfg.get("cell_type_name_filter") or []
@@ -76,9 +94,10 @@ def restrict_config_to_genes(config: dict[str, Any], gene_symbols: list[str]) ->
     config["_genes_flat"] = {
         g: f for g, f in config["_genes_flat"].items() if g in loaded
     }
+    panel = config.get("_gene_panel") or config.get("receptors") or {}
     config["_families"] = [
         f for f in config["_families"]
-        if any(g in loaded for g in config["receptors"].get(f, []))
+        if any(g in loaded for g in (panel.get(f) or []))
     ]
     return missing
 

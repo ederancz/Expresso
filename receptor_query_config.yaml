@@ -7,7 +7,7 @@
 # These are loaded at runtime; the notebook never hard-codes gene names.
 # -------------------------------------------------------------------
 
-receptors: #full list on 07 July 2026 via Claude
+gene_panel: #receptor panel; full list on 07 July 2026 via Claude
   glutamate:
     # - Grin1    # from here NMDA_ionotropic
     # - Grin2a
@@ -326,6 +326,7 @@ data:
   vizgen_samples: null                 # null = all S1R1…S3R3 pairs found in vizgen_data_dir
   vizgen_label_transfer_max_cells: 50000   # Allen MERFISH subsample for kNN label transfer
   vizgen_label_transfer_k: 15
+  vizgen_label_transfer_min_confidence: 0.0   # 0 = keep all; e.g. 0.6 drops low-confidence kNN labels
   # Milestone 4 — Zhuang MERFISH cross-reference
   zhuang_datasets:                      # replicates to include (shared ~1,122-gene panel)
     - Zhuang-ABCA-1

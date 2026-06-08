@@ -200,9 +200,12 @@ def aggregate_scrna_expression(
     config: dict[str, Any],
 ) -> pd.DataFrame:
     """
-    Mean expression per (cell_type_level, brain_area).
+    Mean expression and detection rate per (cell_type_level, brain_area).
 
-    Returns long DataFrame: cell_type, brain_area, gene, mean_expression, family.
+    Returns long DataFrame with columns: cell_type, brain_area, gene,
+    mean_expression (mean over all cells in the group, zeros included),
+    frac_expressing (fraction of cells with expression > 0), n_cells
+    (cells in the group), family.
     """
     cell_type_col = config["cell_type_level"]
     genes_flat = config["_genes_flat"]
@@ -218,16 +221,23 @@ def aggregate_scrna_expression(
     meta = cell_meta.loc[df.index, [cell_type_col, "brain_area"]]
     df = df.join(meta)
 
-    grouped = df.groupby([cell_type_col, "brain_area"], observed=True)[gene_symbols].mean()
+    grouped = df.groupby([cell_type_col, "brain_area"], observed=True)
+    mean_df = grouped[gene_symbols].mean()
+    frac_df = grouped[gene_symbols].agg(lambda s: float((s > 0).mean()))
+    n_cells = grouped.size()
 
     rows = []
-    for (ct, ba), series in grouped.iterrows():
-        for gene, val in series.items():
+    for (ct, ba), mean_series in mean_df.iterrows():
+        frac_series = frac_df.loc[(ct, ba)]
+        group_n = int(n_cells.loc[(ct, ba)])
+        for gene, val in mean_series.items():
             rows.append({
                 "cell_type": ct,
                 "brain_area": ba,
                 "gene": gene,
                 "mean_expression": val,
+                "frac_expressing": float(frac_series[gene]),
+                "n_cells": group_n,
                 "family": genes_flat.get(gene, "unknown"),
             })
 
@@ -245,8 +255,6 @@ def combined_heatmap_matrix(
     Expression is mean across configured brain areas per cell type × gene.
     Cell types may be narrowed via ``cell_type_name_filter`` in config.
     """
-    from src.utils import filter_cell_types_by_name
-
     genes = config["_all_genes"]
     cell_types = filter_cell_types_by_name(agg_long["cell_type"].unique(), config)
     mat = agg_long.pivot_table(
@@ -421,9 +429,9 @@ def _merfish_gene_panel(cache: Any, directory: str) -> set[str]:
     return set(gene_df["gene_symbol"].astype(str))
 
 
-def _imputed_gene_symbols(cache: Any) -> set[str]:
+def _imputed_gene_symbols(cache: Any, config: dict[str, Any] | None = None) -> set[str]:
     """Load gene symbols from imputed h5ad var (metadata only via backed read)."""
-    data_suffix = "log2"
+    data_suffix = get_expression_suffix(config) if config else "log2"
     path = cache.get_file_path(
         directory=MERFISH_IMPUTED_DIR,
         file_name=f"C57BL6J-638850-imputed/{data_suffix}",
@@ -467,7 +475,7 @@ def check_gene_availability(
 
     if _imputed_panel_cache is None:
         try:
-            _imputed_panel_cache = _imputed_gene_symbols(cache)
+            _imputed_panel_cache = _imputed_gene_symbols(cache, config)
         except Exception:
             _imputed_panel_cache = set()
 
@@ -824,23 +832,27 @@ def load_zhuang_expression_subset(
 def aggregate_zhuang_replicates_mean(
     per_replicate: list[pd.DataFrame],
 ) -> pd.DataFrame:
-    """Mean expression across Zhuang replicate-level aggregates."""
+    """Combine replicate-level aggregates: mean expression/detection, summed n_cells."""
+    cols = [
+        "cell_type", "brain_area", "gene",
+        "mean_expression", "frac_expressing", "n_cells", "family",
+    ]
     if not per_replicate:
-        return pd.DataFrame(
-            columns=["cell_type", "brain_area", "gene", "mean_expression", "family"],
-        )
+        return pd.DataFrame(columns=cols)
     if len(per_replicate) == 1:
         return per_replicate[0].copy()
 
     combined = pd.concat(per_replicate, ignore_index=True)
-    return (
-        combined.groupby(
-            ["cell_type", "brain_area", "gene", "family"],
-            observed=True,
-        )["mean_expression"]
-        .mean()
-        .reset_index()
+    grouped = combined.groupby(
+        ["cell_type", "brain_area", "gene", "family"],
+        observed=True,
     )
+    agg_spec: dict[str, str] = {"mean_expression": "mean"}
+    if "frac_expressing" in combined.columns:
+        agg_spec["frac_expressing"] = "mean"
+    if "n_cells" in combined.columns:
+        agg_spec["n_cells"] = "sum"
+    return grouped.agg(agg_spec).reset_index()
 
 
 def load_zhuang_aggregated(
@@ -997,22 +1009,47 @@ def _read_vizgen_gene_header(path: Path) -> list[str]:
 
 
 def _normalize_log2_cpm_plus_one(x: np.ndarray) -> np.ndarray:
-    """Raw counts -> log2(CPM+1), row-wise."""
+    """Raw counts -> log2(CPM+1), row-wise (denominator = sum over given columns).
+
+    Only correct when ``x`` already contains the full gene panel for each cell.
+    For a gene *subset*, use :func:`_log2_cpm_plus_one_with_totals` with per-cell
+    totals computed over the full panel; otherwise CPM is normalised to the subset
+    and not comparable across datasets.
+    """
     arr = np.asarray(x, dtype=np.float64)
     totals = arr.sum(axis=1, keepdims=True)
-    totals = np.where(totals <= 0, 1.0, totals)
-    cpm = arr / totals * 1e6
+    return _log2_cpm_plus_one_with_totals(arr, totals)
+
+
+def _log2_cpm_plus_one_with_totals(
+    counts: np.ndarray,
+    totals: np.ndarray,
+) -> np.ndarray:
+    """log2(CPM+1) for ``counts`` using externally supplied per-cell ``totals``.
+
+    ``totals`` is the per-cell library size (sum over the full real-gene panel),
+    so a gene subset is normalised against true library size rather than the
+    subset sum.
+    """
+    arr = np.asarray(counts, dtype=np.float64)
+    tot = np.asarray(totals, dtype=np.float64).reshape(-1, 1)
+    tot = np.where(tot <= 0, 1.0, tot)
+    cpm = arr / tot * 1e6
     return np.log2(cpm + 1.0)
 
 
-def _knn_majority_labels(
+def _knn_majority_labels_with_confidence(
     x_ref: np.ndarray,
     y_ref: np.ndarray,
     x_query: np.ndarray,
     *,
     k: int,
-) -> np.ndarray:
-    """Assign labels by majority vote among *k* nearest reference neighbours."""
+) -> tuple[np.ndarray, np.ndarray]:
+    """Majority-vote labels among *k* nearest neighbours, with vote-fraction confidence.
+
+    Returns ``(labels, confidence)`` where confidence is the fraction of the k
+    neighbours that carried the winning label (1/k .. 1.0).
+    """
     if len(x_ref) == 0:
         raise ValueError("Reference matrix is empty")
 
@@ -1023,12 +1060,35 @@ def _knn_majority_labels(
         indices = np.asarray(indices).reshape(-1, 1)
 
     labels: list[str] = []
+    confidences: list[float] = []
     y_arr = np.asarray(y_ref)
     for row in np.asarray(indices):
         neighbours = y_arr[row]
         uniq, counts = np.unique(neighbours, return_counts=True)
-        labels.append(str(uniq[counts.argmax()]))
-    return np.array(labels, dtype=object)
+        winner = counts.argmax()
+        labels.append(str(uniq[winner]))
+        confidences.append(float(counts[winner]) / float(k_eff))
+    return np.array(labels, dtype=object), np.asarray(confidences, dtype=np.float64)
+
+
+def _knn_majority_labels(
+    x_ref: np.ndarray,
+    y_ref: np.ndarray,
+    x_query: np.ndarray,
+    *,
+    k: int,
+) -> np.ndarray:
+    """Assign labels by majority vote among *k* nearest reference neighbours."""
+    labels, _ = _knn_majority_labels_with_confidence(x_ref, y_ref, x_query, k=k)
+    return labels
+
+
+def _standardize_fit(x_ref: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per-feature mean/std from the reference matrix (std floored to 1.0)."""
+    mu = np.asarray(x_ref, dtype=np.float64).mean(axis=0)
+    sigma = np.asarray(x_ref, dtype=np.float64).std(axis=0)
+    sigma = np.where(sigma <= 0, 1.0, sigma)
+    return mu, sigma
 
 
 def _subsample_reference_cells(
@@ -1115,10 +1175,26 @@ def transfer_allen_merfish_labels(
         x_query = x_query.toarray()
     else:
         x_query = np.asarray(x_query)
+    x_query = np.asarray(x_query, dtype=np.float64)
+    x_ref = np.asarray(x_ref, dtype=np.float64)
+
+    # Standardise per gene using reference statistics so kNN distances are not
+    # dominated by high-variance genes or by cross-dataset scale differences.
+    mu, sigma = _standardize_fit(x_ref)
+    x_ref_z = (x_ref - mu) / sigma
+    x_query_z = (x_query - mu) / sigma
 
     adata = adata.copy()
-    adata.obs[cell_type_col] = _knn_majority_labels(x_ref, y_type, x_query, k=k)
-    adata.obs["brain_area"] = _knn_majority_labels(x_ref, y_area, x_query, k=k)
+    type_labels, type_conf = _knn_majority_labels_with_confidence(
+        x_ref_z, y_type, x_query_z, k=k,
+    )
+    area_labels, area_conf = _knn_majority_labels_with_confidence(
+        x_ref_z, y_area, x_query_z, k=k,
+    )
+    adata.obs[cell_type_col] = type_labels
+    adata.obs["brain_area"] = area_labels
+    adata.obs["label_transfer_confidence"] = type_conf
+    adata.obs["brain_area_transfer_confidence"] = area_conf
     return adata
 
 
@@ -1146,18 +1222,26 @@ def load_vizgen_sample(
 
     all_cols = pd.read_csv(cbg_path, nrows=0).columns.tolist()
     index_col = all_cols[0]
-    cols_to_read = [index_col] + [g for g in use_genes if g in all_cols]
-    expr = pd.read_csv(cbg_path, index_col=index_col, usecols=cols_to_read)
+    # Real-gene columns = everything except the index and Vizgen 'Blank*' controls.
+    # Per-cell library size is computed over this full panel so that a requested
+    # gene subset is normalised to true library size (CPM), not the subset sum.
+    real_gene_cols = [
+        c for c in all_cols
+        if c != index_col and not str(c).lower().startswith("blank")
+    ]
+    full = pd.read_csv(cbg_path, index_col=index_col, usecols=[index_col] + real_gene_cols)
     meta = pd.read_csv(meta_path, index_col=0)
 
-    common = expr.index.intersection(meta.index)
+    common = full.index.intersection(meta.index)
     if len(common) == 0:
         raise RuntimeError(f"No overlapping cell IDs between expression and metadata ({sample_tag})")
 
-    expr = expr.loc[common, use_genes]
+    full = full.loc[common]
     meta = meta.loc[common]
 
-    x = _normalize_log2_cpm_plus_one(expr.to_numpy())
+    totals = full.to_numpy().sum(axis=1)
+    counts = full[use_genes].to_numpy()
+    x = _log2_cpm_plus_one_with_totals(counts, totals)
     adata = ad.AnnData(
         X=x.astype(np.float32),
         obs=meta,
@@ -1222,6 +1306,9 @@ def load_vizgen_aggregated(
 
     brain_areas = set(config["brain_areas"])
     cell_type_col = config["cell_type_level"]
+    min_conf = float(
+        config.get("data", {}).get("vizgen_label_transfer_min_confidence", 0.0)
+    )
     per_sample: list[pd.DataFrame] = []
 
     for sample_tag in tqdm(samples, desc="Vizgen samples"):
@@ -1230,18 +1317,22 @@ def load_vizgen_aggregated(
             adata, x_ref, y_type, y_area, gene_order, config,
         )
         cell_meta = adata.obs
-        in_area = cell_meta["brain_area"].isin(brain_areas)
-        if not in_area.any():
+        keep = cell_meta["brain_area"].isin(brain_areas)
+        if min_conf > 0.0 and "label_transfer_confidence" in cell_meta.columns:
+            keep = keep & (cell_meta["label_transfer_confidence"] >= min_conf)
+        if not keep.any():
             warnings.warn(
                 f"No Vizgen cells in {sample_tag!r} assigned to config brain_areas "
-                f"{config['brain_areas']} after label transfer; skipping sample.",
+                f"{config['brain_areas']} after label transfer"
+                + (f" with confidence ≥ {min_conf}" if min_conf > 0 else "")
+                + "; skipping sample.",
                 UserWarning,
                 stacklevel=2,
             )
             continue
 
-        cell_meta = cell_meta.loc[in_area, [cell_type_col, "brain_area"]].copy()
-        adata = adata[in_area].copy()
+        cell_meta = cell_meta.loc[keep, [cell_type_col, "brain_area"]].copy()
+        adata = adata[keep].copy()
         per_sample.append(aggregate_scrna_expression(adata, cell_meta, config))
 
     if not per_sample:
