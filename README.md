@@ -35,13 +35,16 @@ pip install -r requirements.txt
 
 For Milestone 3 (Vizgen), no extra pip packages are needed beyond `requirements.txt`. Download Vizgen CSVs and set `data.vizgen_data_dir` in the config.
 
-Edit the config for genes and brain regions. Two panels ship with the repo and use
-the same schema (gene panel under the top-level `gene_panel` key):
+Edit the config for genes and brain regions. The unified
+[`query_config.yaml`](query_config.yaml) is the single source of truth: its
+`gene_panel` is nested two levels — `category → family → genes` — with two
+categories, `receptors` (neuromodulatory) and `excitability` (intrinsic ion
+channels; see [`excitability_genes.md`](excitability_genes.md)). All notebooks
+point at it via their `CONFIG_PATH` line.
 
-- [`receptor_query_config.yaml`](receptor_query_config.yaml) — neurotransmitter receptors
-- [`excitability_query_config.yaml`](excitability_query_config.yaml) — excitability ion channels (see [`excitability_genes.md`](excitability_genes.md))
-
-Each notebook has a `CONFIG_PATH` line near the top; point it at whichever config you want to run. `load_config` also accepts the legacy keys `receptors`/`excitability`.
+To analyse only one category, comment out the other under `gene_panel`.
+`load_config` also accepts a flat panel (`family → genes`) and the legacy
+top-level keys `receptors`/`excitability`, so older configs still load unchanged.
 
 ## Notebooks
 

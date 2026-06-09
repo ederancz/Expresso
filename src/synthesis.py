@@ -170,6 +170,7 @@ def build_evidence_table(
     min_mean = float(synth_cfg.get("min_mean", DEFAULT_MIN_MEAN)) if min_mean is None else min_mean
     allen_gene_sources = allen_gene_sources or {}
     genes_flat = config.get("_genes_flat", {})
+    gene_category = config.get("_gene_category", {}) or {}
 
     region_keys = [k for k in aggregates if DATASET_SPECS[k]["region_resolved"]]
     if not region_keys:
@@ -189,6 +190,8 @@ def build_evidence_table(
         .reset_index(drop=True)
     )
     master["family"] = master["gene"].map(genes_flat).fillna("unknown")
+    if gene_category:
+        master["category"] = master["gene"].map(gene_category).fillna("unknown")
 
     for key in DATASET_SPECS:
         if key not in aggregates:
@@ -306,11 +309,19 @@ def summarize_target(
         fam: sorted(g["gene"].tolist())
         for fam, g in expressed.groupby("family", observed=True)
     }
+    families_by_category: dict[str, dict[str, list[str]]] = {}
+    if "category" in expressed.columns:
+        for cat, cdf in expressed.groupby("category", observed=True):
+            families_by_category[str(cat)] = {
+                fam: sorted(g["gene"].tolist())
+                for fam, g in cdf.groupby("family", observed=True)
+            }
     return {
         "cell_type": cell_type,
         "region": region,
         "tiers": tiers,
         "families_expressed": families,
+        "families_by_category": families_by_category,
         "n_genes_considered": int(len(sub)),
     }
 
@@ -321,15 +332,26 @@ def statement_scaffold(summary: dict[str, Any]) -> str:
     region = summary["region"] or "(region-pooled)"
     high = summary["tiers"]["high"]
     medium = summary["tiers"]["medium"]
-    fams = summary["families_expressed"]
+    by_cat = summary.get("families_by_category") or {}
     lines = [
         f"In {region}, {ct} neurons express (cross-validated):",
         f"  High confidence (≥2 independent measured datasets): {', '.join(high) or '—'}",
         f"  Medium confidence (1 independent measured dataset): {', '.join(medium) or '—'}",
-        "  Expressed gene families:",
     ]
-    for fam in sorted(fams):
-        lines.append(f"    - {fam}: {', '.join(fams[fam])}")
+    # Interpretive labels per category for the two halves of the claim.
+    cat_label = {
+        "receptors": "Neuromodulatory / synaptic receptors (→ neuromodulatory influences)",
+        "excitability": "Intrinsic excitability genes (→ excitability profile)",
+    }
+    if by_cat:
+        for cat in sorted(by_cat):
+            lines.append(f"  {cat_label.get(cat, cat)}:")
+            for fam in sorted(by_cat[cat]):
+                lines.append(f"    - {fam}: {', '.join(by_cat[cat][fam])}")
+    else:
+        lines.append("  Expressed gene families:")
+        for fam in sorted(summary["families_expressed"]):
+            lines.append(f"    - {fam}: {', '.join(summary['families_expressed'][fam])}")
     lines.append(
         "  Note: tiers are detection-based; imputed Allen MERFISH genes are "
         "supporting evidence only (not independent of Allen scRNA)."

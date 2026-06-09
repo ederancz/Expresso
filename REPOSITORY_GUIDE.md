@@ -32,7 +32,7 @@ A technical guide to the **Expresso** codebase: purpose, architecture, data flow
 
 Expresso queries **receptor gene expression** across **mouse brain areas** and **cell types** using the [Allen Brain Cell Atlas (ABC Atlas)](https://alleninstitute.github.io/abc_atlas_access/). It is designed as a **config-driven analysis pipeline**:
 
-- **No hard-coded genes or regions** in notebook logic — everything comes from `receptor_query_config.yaml`.
+- **No hard-coded genes or regions** in notebook logic — everything comes from `query_config.yaml`.
 - **Memory-efficient I/O** — expression matrices are read in backed mode and sliced to only the genes and cells needed.
 - **Two primary analysis modes** (implemented):
   - **Milestone 1:** scRNA-seq heatmaps (cell type × brain area)
@@ -52,8 +52,7 @@ Expresso/
 ├── README.md                      # Quick start, setup, notebook index
 ├── REPOSITORY_GUIDE.md            # This document
 ├── REVIEW.md                      # Code/science review + correctness-fix rationale
-├── receptor_query_config.yaml     # Receptor panel config (genes, regions, output, data paths)
-├── excitability_query_config.yaml # Excitability ion-channel panel (same schema)
+├── query_config.yaml              # Unified config: gene_panel (receptors + excitability), regions, output, data
 ├── pyproject.toml                 # Package metadata (requires-python >=3.11,<3.13)
 ├── environment.yml                # Conda env (Python 3.12 + pip requirements)
 ├── requirements.txt               # Core deps (Milestones 1–3)
@@ -88,7 +87,7 @@ Expresso/
 ## Architecture overview
 
 ```
-                    receptor_query_config.yaml
+                         query_config.yaml
                               │
                               ▼
                        src/config.py
@@ -125,7 +124,7 @@ Expresso/
 
 ## Configuration reference
 
-File: [`receptor_query_config.yaml`](receptor_query_config.yaml)
+File: [`query_config.yaml`](query_config.yaml)
 
 ### Required top-level keys
 
@@ -537,7 +536,7 @@ Exits with error on unsupported Python (≥3.13 or <3.11).
 
 ### Quick exploration (minimal download)
 
-1. Narrow `receptor_query_config.yaml` to 1–2 genes and 1–2 broad regions (`STR`, `TH`)
+1. Narrow `query_config.yaml` to 1–2 genes and 1–2 broad regions (`STR`, `TH`)
 2. Run M1 dev cell or `verify_setup.py` (without `--quick`)
 3. Run M2 for genes in the 500-gene panel (check MERFISH gene list first)
 

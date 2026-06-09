@@ -8,8 +8,10 @@ taxonomy framework, to support statements of the form *"cell type C in region R
 expresses gene set X, implying excitability profile … and neuromodulatory
 influences …"*.
 
-Status: **review only.** No source code changed by this document. Fix decisions
-captured at the end.
+Status: **review complete; all approved fixes implemented.** This document records
+the original findings and, for each, the resolution now in the codebase. Items are
+tagged **[Fixed]**, **[Documented]** (accepted/explained, no code change), or
+**[Open]**.
 
 ---
 
@@ -25,10 +27,11 @@ The architecture is sound and well-suited to the goal:
 - Four datasets wired for cross-validation: Allen scRNA (WMB-10Xv3), Allen MERFISH
   (± imputed), Vizgen receptor map, Zhuang MERFISH.
 
-However, for the **specific** scientific claim (cell type × region expresses gene
-set, cross-validated), there are correctness issues that can change conclusions,
-the **excitability arm is currently non-runnable**, and the **final synthesis /
-cross-validation statement step does not yet exist**.
+The correctness issues that could change conclusions have been addressed, the
+**excitability arm now runs** off the unified config, and the **synthesis /
+cross-validation statement step now exists** (`src/synthesis.py` +
+`notebooks/05_synthesis.ipynb`). Remaining items are low-severity polish, tracked
+in §5–§6.
 
 ---
 
@@ -61,152 +64,160 @@ excitability/peptide genes are imputed (not measured) in Allen MERFISH.
 
 ## 2. Scientific correctness (priority)
 
-### 2.1 [Critical] Vizgen "CPM" normalized over the gene subset, not library size
-`load_vizgen_sample` reads only the requested receptor columns, then
-`_normalize_log2_cpm_plus_one` divides each cell by the row sum across *those*
-genes — i.e. the denominator is "total receptor counts", not library size.
+### 2.1 [Fixed] Vizgen "CPM" normalized over the gene subset, not library size
+Previously `load_vizgen_sample` read only the requested receptor columns, then
+divided each cell by the row sum across *those* genes — the denominator was "total
+receptor counts", not library size. This inflated values (saved cross-ref showed
+Vizgen ~9–12 vs Allen ~1–3), broke comparability, and created artifactual
+structure for cells expressing few receptors.
 
-Consequences:
-- Inflated values (saved cross-ref shows Vizgen ~9–12 vs Allen ~1–3).
-- Not CPM; not comparable to Allen/Zhuang.
-- Cells expressing few receptors get each one scaled up → artifactual structure.
+**Resolution:** `load_vizgen_sample` now computes per-cell library totals over the
+**full real-gene panel** (all non-`Blank*` columns), and
+`_log2_cpm_plus_one_with_totals` applies `log2(CPM+1)` for the requested subset
+using those totals. No volume division.
 
-This corrupts the Allen↔Vizgen cross-validation. **Decision: normalize over the
-full real-gene panel (exclude `Blank*` control probes); no volume division.**
+### 2.2 [Fixed] Cross-dataset absolute comparison mixes CPM denominators
+Panels differ in size (Allen ≈500, Zhuang ≈1122, Vizgen ≈483), so log2(CPM+1)
+magnitudes are not directly comparable across datasets. The scatter previously led
+with **Pearson r** and a y=x identity line, over-promising comparability.
 
-### 2.2 [Major] Cross-dataset absolute comparison mixes CPM denominators
-Even after 2.1, panels differ (Allen ≈500, Zhuang ≈1122, Vizgen ≈483), so
-log2(CPM+1) magnitudes are not directly comparable across datasets. The scatter
-currently leads with **Pearson r** and an identity (y=x) line, over-promising
-comparability.
+**Resolution:** `plot_crossref_scatter` now leads with **Spearman ρ** (rank
+concordance), reports a measured-only ρ as well, and demotes Pearson r with a
+caveat about differing CPM denominators (`_safe_corr` helper).
 
-Fix: make **Spearman ρ** (rank concordance) the headline; keep Pearson secondary;
-drop/annotate the y=x line or compare per-dataset z-scored values.
+### 2.3 [Fixed] kNN label transfer in unnormalized, unscaled space
+`transfer_allen_merfish_labels` did Euclidean kNN with Allen log2(CPM+1) as
+reference and Vizgen as query, with no per-gene scaling — making the transferred
+cell-type/region labels (which underpin any Vizgen-based claim) the least reliable
+link.
 
-### 2.3 [Major] kNN label transfer in unnormalized, unscaled space
-`transfer_allen_merfish_labels` does Euclidean kNN with Allen log2(CPM+1) as
-reference and Vizgen (subset-normalized) as query, no per-gene scaling/PCA. The
-resulting cell-type/region labels on Vizgen cells — the cells underpinning a
-Vizgen-based claim — are the least reliable link.
+**Resolution:** features are now z-scored per gene on the shared genes
+(`_standardize_fit` fits on the reference, applied to both), and
+`_knn_majority_labels_with_confidence` records a neighbour-vote confidence for both
+cell type and brain area. `load_vizgen_aggregated` can drop low-confidence cells
+via `vizgen_label_transfer_min_confidence`.
 
-Fix: z-score per gene on the shared genes (fit on reference, apply to query)
-before kNN; report transfer confidence (neighbour-vote fraction) so low-confidence
-cells can be excluded.
-
-### 2.4 [Major, conceptual] Guard against circular cross-validation (imputed vs measured)
+### 2.4 [Fixed] Guard against circular cross-validation (imputed vs measured)
 Most genes are imputed in Allen MERFISH (saved run: 75/109 receptors; worse for
-excitability ion channels). Allen imputation uses WMB-10x scRNA, so:
-- Allen-imputed ↔ Allen-scRNA agreement is partly circular (not independent).
-- Allen-imputed ↔ Zhuang-measured and ↔ Vizgen-measured are independent.
+excitability ion channels). Because Allen imputation uses WMB-10x scRNA,
+Allen-imputed ↔ Allen-scRNA agreement is partly circular, whereas Allen-imputed ↔
+Zhuang-measured and ↔ Vizgen-measured are independent.
 
-The code marks imputed genes (`*`, hollow markers) — good — but the
-cross-validation **metric** should be reported **separately for measured vs
-imputed** Allen genes, and the final claim should lean on genes measured in ≥2
-independent datasets.
+**Resolution:** provenance is tracked end-to-end. Imputed genes are marked in plots
+(`*`, hollow markers); the cross-ref reports measured-only metrics separately; and
+the synthesis evidence table counts `n_independent_measured_detections` and assigns
+confidence tiers that lean on genes measured in ≥2 independent datasets (§4).
 
-### 2.5 [Moderate] Mean-with-zeros is the only summary statistic
-`aggregate_scrna_expression` reports mean log2(CPM+1) over all cells (zeros
-included). A defensible "expresses" call also needs **fraction of cells
-expressing** (detection rate). Add fraction-expressing to the aggregation; the
-standard artifact is a dot plot (color = mean-in-expressing, size = fraction).
+### 2.5 [Fixed] Mean-with-zeros is the only summary statistic
+`aggregate_scrna_expression` reported only mean log2(CPM+1) over all cells. A
+defensible "expresses" call also needs **fraction of cells expressing**.
 
-### 2.6 [Moderate] scRNA region resolution vs a fine-region claim
-Handled correctly in code (pooling warning), but to state explicitly: notebook 01
-cannot support a VISpm-specific claim (pools all VIS dissection). Fine-region
-specificity must come from Allen MERFISH / Zhuang (native CCF) and Vizgen (label
-transfer). The synthesis encodes this: scRNA → cell-type-level expression; spatial
-datasets → region localization.
+**Resolution:** aggregation now returns `frac_expressing` and `n_cells` alongside
+`mean_expression`; replicate averaging (`aggregate_zhuang_replicates_mean`, also
+used for Vizgen) averages `frac_expressing` and sums `n_cells`. The synthesis dot
+plot uses size = fraction expressing, colour = mean.
 
----
-
-## 3. Excitability arm (core; currently non-runnable)
-
-### 3.1 [Blocker] Config key mismatch
-`config.py` hard-requires top-level `receptors` and builds the gene map from it;
-`excitability_query_config.yaml` uses top-level `excitability`, and notebooks
-hard-code `receptor_query_config.yaml`. The excitability analysis cannot run.
-
-**Decision: introduce a generic `gene_panel` key and migrate both YAMLs to it.**
-All derived keys (`_genes_flat`/`_all_genes`/`_families`) and downstream logic stay
-the same; notebooks get a `CONFIG_PATH` switch.
-
-### 3.2 [Moderate] Excitability genes mostly outside MERFISH panels
-Expect Allen MERFISH to impute/lack most ion-channel genes; Vizgen (a receptor
-panel) covers almost none. For excitability the credible datasets are Allen scRNA
-(all genes, cell-type resolution) + Zhuang (region localization, partial coverage),
-with Allen-imputed as supporting. Consider lifting the PROMINENT/PLAUSIBLE tier
-from `excitability_genes.md` comments into the YAML so it can drive prioritization.
+### 2.6 [Documented] scRNA region resolution vs a fine-region claim
+Handled correctly in code (pooling warning): notebook 01 cannot support a
+VISpm-specific claim (it pools all VIS dissection). Fine-region specificity comes
+from Allen MERFISH / Zhuang (native CCF) and Vizgen (label transfer). The synthesis
+encodes this split: scRNA → cell-type-level expression; spatial datasets → region
+localization (`region_resolved` flag per dataset).
 
 ---
 
-## 4. Design spec — synthesis + cross-validation (to build after approval)
+## 3. Excitability arm (core; now runnable)
 
-Level-agnostic by design: operate at whatever `cell_type_level` is configured;
-no hardcoded cell type. "L5 ET × VISpm" is only an illustrative target.
+### 3.1 [Fixed] Config key mismatch
+`config.py` previously hard-required a top-level `receptors` key, and notebooks
+hard-coded `receptor_query_config.yaml`, so the excitability panel could not run.
 
-- **Target selection (optional config block):** `target: {cell_type: <name or null>,
-  region: <acronym or null>}`. When null, produce the full table; when set, produce
-  the focused claim. Selection happens at the configured level.
-- **Per-gene, per-dataset evidence table:** one row per gene; per-dataset columns
-  for `mean_expr`, `frac_expressing` (new, §2.5), `n_cells`, `source`
-  (measured/imputed for Allen), and per-dataset z-score / within-level rank
-  (normalization-robust, §2.2).
-- **Cross-validation metrics:**
-  - Detection concordance: gene "expressed" in dataset D if `frac_expressing ≥ f`
-    AND `mean ≥ m`; count independent datasets detecting it (Allen-imputed counted
-    separately, §2.4).
-  - Rank concordance: Spearman ρ across cell types between dataset pairs within the
-    target region; measured-only and measured+imputed variants.
-  - Per-gene confidence tier: high = measured-detected in ≥2 independent datasets;
-    medium = 1 measured + Allen-imputed; low = imputed-only / single dataset.
-- **Outputs:** tidy `*_evidence.parquet` + CSV; focused dot plot (genes × dataset);
-  concordance summary figure; an auto-generated statement scaffold combining a
-  curated receptor-family → neuromodulator/sign map and channel-family →
-  biophysical-role map (the latter already in `excitability_genes.md`).
+**Resolution:** a generic `gene_panel` key was introduced (`_parse_gene_panel`),
+accepting either a flat `family → genes` map or a nested
+`category → family → genes` map; legacy top-level `receptors`/`excitability` keys
+still load. Both panels now live in the unified `query_config.yaml` under
+`gene_panel` (categories `receptors` + `excitability`), and all notebooks point at
+it. The old per-panel YAMLs (`receptor_query_config.yaml`,
+`excitability_query_config.yaml`) have been removed.
+
+### 3.2 [Open] Excitability genes mostly outside MERFISH panels
+Allen MERFISH imputes/lacks most ion-channel genes and Vizgen (a receptor panel)
+covers almost none, so for excitability the credible datasets are Allen scRNA (all
+genes, cell-type resolution) + Zhuang (region localization, partial coverage), with
+Allen-imputed as supporting — exactly what the synthesis confidence tiers capture.
+*Optional future enhancement:* lift the PROMINENT/PLAUSIBLE tier from
+`excitability_genes.md` into the YAML so it can drive prioritization.
 
 ---
 
-## 5. Other correctness & mechanics (medium/low)
+## 4. Synthesis + cross-validation — [Fixed / implemented]
 
-- [Low] Imputed suffix hardcoded: `_imputed_gene_symbols` reads `imputed/log2`
-  regardless of `expression_unit`, while the imputed data slice uses the configured
-  suffix. Inconsistent for `expression_unit: raw`.
-- [Low] Dead/duplicated helpers: `top_variable_cell_types` no longer used by
-  `combined_heatmap_matrix`; `filter_cell_types_by_name` imported at module top and
-  inside functions.
-- [Low] `plot_spatial` / `plot_family_spatial_panel` are unused by notebooks
-  (NB02 produces heatmaps). Either wire spatial maps in (useful for the region
-  story) or document them as library extras.
-- [Low] Cross-ref join assumes identical taxonomy strings across datasets (true for
-  Allen/Zhuang/transferred Vizgen). Add an assertion/log of overlap counts to avoid
-  silent empty joins.
+Implemented in `src/synthesis.py` and driven by `notebooks/05_synthesis.ipynb`.
+Level-agnostic by design: operates at whatever `cell_type_level` is configured
+(default `supertype`); "L5 ET × VISpm" is only an illustrative target.
 
----
-
-## 6. Documentation & reproducibility hygiene (low)
-
-- `cursor_handover.md` is deleted but still linked from `README.md` and
-  `REPOSITORY_GUIDE.md` — remove links or restore.
-- `REPOSITORY_GUIDE.md` is stale: ~50-gene/8-family panel and an "adrenergic"
-  family (config uses `noradrenaline`); NB02 described as "spatial scatter maps"
-  (it's heatmaps); NB04 described as a "stub" (fully implemented).
-- `abc_atlas_access` pinned to git HEAD; manifest snapshot mitigates this for
-  reproducibility.
+- **Dataset registry & discovery:** `DATASET_SPECS` describes each dataset
+  (parquet names, region resolution, imputed support, independence);
+  `discover_dataset_parquets` / `gather_dataset_aggregates` locate and load the
+  newest per-dataset aggregates from prior runs.
+- **Per-gene, per-dataset evidence table** (`build_evidence_table`): one row per
+  (cell type × region × gene); per-dataset `mean_expression`, `frac_expressing`,
+  `n_cells`, and `source` (measured/imputed for Allen). scRNA is broadcast across
+  regions and flagged `region_resolved=False`. A `category` column carries
+  receptor/excitability.
+- **Cross-validation metrics:** configurable detection flag (`frac ≥ min_frac` AND
+  `mean ≥ min_mean`), `n_independent_measured_detections` (+ a separate
+  `supporting_imputed_detection`), and a `confidence_tier` (high = measured in ≥2
+  independent datasets; medium = 1 measured + Allen-imputed; low = single/imputed).
+- **Targeted outputs:** `target_evidence` / `summarize_target` filter to a
+  cell type (± region); `statement_scaffold` emits a human-readable claim split by
+  category (receptors vs excitability); `plot_evidence_dotplot` renders the dot plot
+  (mean × fraction across datasets). Tidy evidence is written to parquet/CSV.
 
 ---
 
-## 7. Fix plan (decisions captured)
+## 5. Other correctness & mechanics
 
-Decisions:
+- [Fixed] Imputed suffix hardcoding: `_imputed_gene_symbols` now takes `config` and
+  uses `get_expression_suffix`, consistent with the imputed data slice.
+- [Fixed] Duplicated import: `filter_cell_types_by_name` is no longer re-imported
+  inside `combined_heatmap_matrix`.
+- [Open] `top_variable_cell_types` is retained as a library helper but no longer
+  used by `combined_heatmap_matrix`.
+- [Open] `plot_spatial` / `plot_family_spatial_panel` remain unused by notebooks
+  (NB02 produces heatmaps) — kept as library extras for the spatial-map story.
+- [Open] Cross-ref joins assume identical taxonomy strings across datasets (true for
+  Allen/Zhuang/transferred Vizgen); an overlap-count log/assertion would guard
+  against silent empty joins.
+
+---
+
+## 6. Documentation & reproducibility hygiene
+
+- [Fixed] Removed stale `cursor_handover.md` links from `README.md` /
+  `REPOSITORY_GUIDE.md`.
+- [Fixed] `README.md` and `REPOSITORY_GUIDE.md` updated for the unified
+  `query_config.yaml`, the nested `gene_panel` schema, corrected notebook statuses
+  (NB02 = heatmaps; NB03/NB04 implemented; NB05 added), and the removed per-panel
+  YAMLs.
+- [Documented] `abc_atlas_access` is pinned to git HEAD; the per-run manifest
+  snapshot mitigates this for reproducibility.
+
+---
+
+## 7. Fix plan — completed
+
+Decisions (as approved):
 - Vizgen normalization: **full real-gene panel CPM, exclude `Blank*`, no volume**.
-- Config: **generic `gene_panel` key**, migrate both YAMLs.
+- Config: **generic `gene_panel` key**, unified into `query_config.yaml`.
 - Cell-type level: **level-agnostic**; biologically relevant level/clusters TBD later.
+- Region guardrail on cross-run parquet discovery: **warn** on mismatch.
 
-Proposed order:
-1. §2.1 Vizgen full-library normalization (cross-val correctness blocker).
-2. §3.1 generic `gene_panel` config support (unlocks excitability arm).
-3. §2.5 add fraction-expressing to aggregation.
-4. §2.2 / §2.4 Spearman-first stats + measured-vs-imputed split in cross-ref.
-5. §2.3 z-scored kNN label transfer + confidence reporting.
-6. §4 build the level-agnostic synthesis module + notebook.
-7. §5 / §6 cleanup + doc sync.
+All items below are implemented:
+1. ✅ §2.1 Vizgen full-library normalization.
+2. ✅ §3.1 generic `gene_panel` config support (excitability arm unlocked).
+3. ✅ §2.5 fraction-expressing + `n_cells` in aggregation.
+4. ✅ §2.2 / §2.4 Spearman-first stats + measured-vs-imputed split in cross-ref.
+5. ✅ §2.3 z-scored kNN label transfer + confidence reporting.
+6. ✅ §4 level-agnostic synthesis module + notebook.
+7. ✅ §5 / §6 mechanics cleanup + doc sync (incl. region-mismatch warning guardrail).

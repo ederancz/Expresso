@@ -39,7 +39,7 @@ def main() -> int:
     print("1. Loading config...")
     from src.config import DEFAULT_OUTPUT_DIR, load_config, start_run
 
-    config_path = PROJECT_ROOT / "receptor_query_config.yaml"
+    config_path = PROJECT_ROOT / "query_config.yaml"
     config = load_config(config_path)
     assert config["_all_genes"], "No genes in config"
     print(f"   OK — {len(config['_all_genes'])} genes")

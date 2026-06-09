@@ -1,9 +1,10 @@
-"""Load and validate receptor_query_config.yaml."""
+"""Load and validate query_config.yaml (gene panel, regions, output, data)."""
 
 from __future__ import annotations
 
 import json
 import subprocess
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -32,7 +33,66 @@ def _sanitize_run_slug(label: str) -> str:
     return slug.strip("-") or "unknown"
 
 
-def load_config(path: str | Path = "receptor_query_config.yaml") -> dict[str, Any]:
+def _parse_gene_panel(
+    panel: dict[str, Any],
+    panel_key: str,
+) -> tuple[
+    dict[str, list[str]],
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+    list[str],
+]:
+    """Normalise a flat or nested gene panel.
+
+    Accepts either:
+      - flat:   ``family -> [genes]``
+      - nested: ``category -> family -> [genes]`` (e.g. receptors / excitability)
+
+    Returns ``(flat_panel, gene_to_family, gene_to_category, family_to_category,
+    categories)``. For a flat panel, category maps are empty and ``categories`` is [].
+    """
+    values = list(panel.values())
+    nested_flags = [isinstance(v, dict) for v in values]
+    if any(nested_flags) and not all(nested_flags):
+        raise TypeError(
+            f"Gene panel under {panel_key!r} mixes nested (category -> family) and "
+            "flat (family -> [genes]) entries; use a single style."
+        )
+    is_nested = bool(values) and all(nested_flags)
+
+    flat_panel: dict[str, list[str]] = {}
+    gene_to_family: dict[str, str] = {}
+    gene_to_category: dict[str, str] = {}
+    family_to_category: dict[str, str] = {}
+    categories: list[str] = []
+
+    if is_nested:
+        categories = list(panel.keys())
+        for category, families in panel.items():
+            for family, glist in families.items():
+                if family in family_to_category and family_to_category[family] != category:
+                    raise ValueError(
+                        f"Family {family!r} appears under multiple categories "
+                        f"({family_to_category[family]!r} and {category!r}); "
+                        "family names must be unique across categories."
+                    )
+                family_to_category[family] = category
+                flat_panel.setdefault(family, [])
+                for g in glist or []:
+                    gene_to_family[g] = family
+                    gene_to_category[g] = category
+                    flat_panel[family].append(g)
+    else:
+        for family, glist in panel.items():
+            flat_panel[family] = list(glist or [])
+            for g in glist or []:
+                gene_to_family[g] = family
+
+    return flat_panel, gene_to_family, gene_to_category, family_to_category, categories
+
+
+def load_config(path: str | Path = "query_config.yaml") -> dict[str, Any]:
     """Load YAML config and derive flattened gene lists."""
     config_path = Path(path).expanduser().resolve()
     with open(config_path) as f:
@@ -51,7 +111,7 @@ def load_config(path: str | Path = "receptor_query_config.yaml") -> dict[str, An
     if not isinstance(panel, dict) or not panel:
         raise TypeError(
             f"Gene panel under {panel_key!r} must be a non-empty mapping of "
-            "family -> [gene symbols]"
+            "family -> [gene symbols], or category -> family -> [gene symbols]"
         )
 
     if cfg["cell_type_level"] not in _VALID_CELL_TYPE_LEVELS:
@@ -60,16 +120,22 @@ def load_config(path: str | Path = "receptor_query_config.yaml") -> dict[str, An
             f"got {cfg['cell_type_level']!r}"
         )
 
-    genes: dict[str, str] = {}
-    for family, glist in panel.items():
-        for g in glist or []:
-            genes[g] = family
+    (
+        flat_panel,
+        genes,
+        gene_category,
+        family_category,
+        categories,
+    ) = _parse_gene_panel(panel, panel_key)
 
-    cfg["_gene_panel"] = panel
+    cfg["_gene_panel"] = flat_panel
     cfg["_gene_panel_key"] = panel_key
     cfg["_genes_flat"] = genes
     cfg["_all_genes"] = list(genes)
-    cfg["_families"] = list(panel.keys())
+    cfg["_families"] = list(flat_panel.keys())
+    cfg["_categories"] = categories
+    cfg["_gene_category"] = gene_category
+    cfg["_family_category"] = family_category
     cfg["_config_path"] = str(config_path)
 
     raw_filter = cfg.get("cell_type_name_filter") or []
@@ -99,6 +165,20 @@ def restrict_config_to_genes(config: dict[str, Any], gene_symbols: list[str]) ->
         f for f in config["_families"]
         if any(g in loaded for g in (panel.get(f) or []))
     ]
+
+    if config.get("_gene_category"):
+        config["_gene_category"] = {
+            g: c for g, c in config["_gene_category"].items() if g in loaded
+        }
+    if config.get("_family_category"):
+        config["_family_category"] = {
+            f: c for f, c in config["_family_category"].items()
+            if f in config["_families"]
+        }
+    if config.get("_categories"):
+        remaining = set((config.get("_family_category") or {}).values())
+        config["_categories"] = [c for c in config["_categories"] if c in remaining]
+
     return missing
 
 
@@ -279,7 +359,7 @@ def get_vizgen_data_dir(cfg: dict[str, Any]) -> Path:
     if not raw:
         raise ValueError(
             "data.vizgen_data_dir is not set; download Vizgen CSVs and set the path "
-            "in receptor_query_config.yaml",
+            "in query_config.yaml",
         )
     path = Path(raw).expanduser().resolve()
     if not path.is_dir():
@@ -365,6 +445,41 @@ def get_zhuang_datasets(cfg: dict[str, Any]) -> list[str]:
     return [str(d) for d in raw]
 
 
+def _manifest_brain_areas(run_dir: Path) -> list[str] | None:
+    """Read brain_areas from a run folder's manifest, if available."""
+    manifest_path = run_dir / RUN_MANIFEST_NAME
+    if not manifest_path.is_file():
+        return None
+    try:
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+        contents = manifest.get("receptor_query_config", {}).get("contents", {})
+        areas = contents.get("brain_areas")
+        return list(areas) if areas is not None else None
+    except (OSError, ValueError):
+        return None
+
+
+def _warn_if_region_mismatch(parquet_path: Path, cfg: dict[str, Any]) -> None:
+    """Warn when a discovered parquet's run used different brain_areas than ``cfg``."""
+    config_areas = cfg.get("brain_areas")
+    if not config_areas:
+        return
+    run_areas = _manifest_brain_areas(parquet_path.parent)
+    if run_areas is None:
+        return
+    if set(run_areas) != set(config_areas):
+        warnings.warn(
+            f"REGION MISMATCH: using {parquet_path.name} from run "
+            f"{parquet_path.parent.name!r}, whose brain_areas {sorted(run_areas)} "
+            f"differ from the current config {sorted(config_areas)}. Cross-reference/"
+            "synthesis join on brain_area, so only overlapping regions will combine. "
+            "Re-run the source notebook for this region set to avoid sparse/empty results.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+
 def find_prior_run_parquet(
     cfg: dict[str, Any],
     *,
@@ -376,12 +491,15 @@ def find_prior_run_parquet(
     Find the most recent prior run parquet under the exploration root.
 
     Matches run folders named ``{timestamp}_{cell_type_level}_{dataset_slug}``
-    (same convention as :func:`start_run`).
+    (same convention as :func:`start_run`). Warns when the chosen parquet's run
+    used a different ``brain_areas`` set than ``cfg`` (matching keys on level +
+    dataset only, not region).
     """
     explicit = cfg.get("data", {}).get("allen_merfish_parquet")
     if explicit:
         path = Path(explicit).expanduser()
         if path.is_file():
+            _warn_if_region_mismatch(path.resolve(), cfg)
             return path.resolve()
 
     root = resolve_output_dir(
@@ -405,4 +523,6 @@ def find_prior_run_parquet(
     if not candidates:
         return None
 
-    return sorted(candidates, key=lambda p: p.parent.name, reverse=True)[0]
+    chosen = sorted(candidates, key=lambda p: p.parent.name, reverse=True)[0]
+    _warn_if_region_mismatch(chosen, cfg)
+    return chosen
