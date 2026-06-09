@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
@@ -311,6 +312,26 @@ def filter_cell_types_by_name(
             stacklevel=2,
         )
     return matched
+
+
+def print_path(prefix: str, path: str | Path) -> None:
+    """Print a filesystem path; in Jupyter, render as a clickable ``file://`` link.
+
+    Plain ``print`` of paths containing ``!`` breaks notebook auto-linking (e.g.
+    ``…/!Projects/…``); explicit HTML links avoid that.
+    """
+    p = Path(path).expanduser().resolve()
+    uri = p.as_uri()
+    try:
+        from IPython import get_ipython
+        from IPython.display import HTML, display
+
+        if get_ipython() is not None:
+            display(HTML(f'{prefix} <a href="{uri}">{p}</a>'))
+            return
+    except ImportError:
+        pass
+    print(f"{prefix} {p}")
 
 
 def top_variable_cell_types(
