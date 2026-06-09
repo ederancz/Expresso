@@ -67,6 +67,13 @@ DATASET_SPECS: dict[str, dict[str, Any]] = {
 
 DEFAULT_MIN_FRAC = 0.25
 DEFAULT_MIN_MEAN = 1.0
+DEFAULT_GENES_PER_PAGE = 25
+EXPRESSED_TIERS = frozenset({"high", "medium"})
+
+CATEGORY_LABELS: dict[str, str] = {
+    "receptors": "Neuromodulatory / synaptic receptors",
+    "excitability": "Intrinsic excitability ion channels",
+}
 
 
 def _dataset_slug(config: dict[str, Any], dataset_key: str) -> str:
@@ -359,6 +366,373 @@ def statement_scaffold(summary: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _target_slug(cell_type: str, region: str | None) -> str:
+    safe_ct = "".join(c if c.isalnum() else "-" for c in cell_type).strip("-")
+    safe_rg = (region or "pooled").replace("/", "-")
+    return f"{safe_ct}__{safe_rg}"
+
+
+def _safe_family_filename(family: str) -> str:
+    slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in family.strip())
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-") or "family"
+
+
+def _families_by_category(config: dict[str, Any]) -> dict[str, list[str]]:
+    """Return families grouped by category, preserving YAML panel order."""
+    categories = list(config.get("_categories") or [])
+    family_category = config.get("_family_category") or {}
+    families = list(config.get("_families") or [])
+    if not categories:
+        return {"all": families}
+    out: dict[str, list[str]] = {cat: [] for cat in categories}
+    for fam in families:
+        cat = str(family_category.get(fam, "unknown"))
+        out.setdefault(cat, []).append(fam)
+    return {cat: fams for cat, fams in out.items() if fams}
+
+
+def _datasets_in_table(df: pd.DataFrame) -> list[str]:
+    return [k for k in DATASET_SPECS if f"{k}_mean" in df.columns]
+
+
+def _dotplot_vmax(sub: pd.DataFrame, datasets: list[str]) -> float:
+    cols = [f"{k}_mean" for k in datasets]
+    finite = sub[cols].to_numpy(dtype=float)
+    finite = finite[np.isfinite(finite)]
+    vmax = float(np.nanpercentile(finite, 99)) if finite.size else 1.0
+    return vmax or 1.0
+
+
+def _draw_dotplot_on_axes(
+    ax: Any,
+    sub: pd.DataFrame,
+    config: dict[str, Any],
+    *,
+    datasets: list[str],
+    title: str,
+    vmax: float | None = None,
+) -> Any:
+    """Draw genes × datasets dot plot on ``ax``; returns ScalarMappable for colorbar."""
+    import matplotlib.pyplot as plt
+
+    genes = sub["gene"].tolist()
+    gene_idx = {g: i for i, g in enumerate(genes)}
+    cmap = config.get("output", {}).get("heatmap_cmap", "viridis")
+    if vmax is None:
+        vmax = _dotplot_vmax(sub, datasets)
+
+    for j, key in enumerate(datasets):
+        means = sub[f"{key}_mean"].to_numpy(dtype=float)
+        fracs = sub[f"{key}_frac"].to_numpy(dtype=float)
+        sources = sub[f"{key}_source"].to_numpy()
+        for g, m, fr, src in zip(genes, means, fracs, sources):
+            if not np.isfinite(m):
+                continue
+            size = 30.0 + 320.0 * (0.0 if not np.isfinite(fr) else fr)
+            ax.scatter(
+                j,
+                gene_idx[g],
+                s=size,
+                c=[m],
+                cmap=cmap,
+                vmin=0,
+                vmax=vmax,
+                edgecolors="red" if src == "imputed" else "black",
+                linewidths=1.1 if src == "imputed" else 0.4,
+            )
+
+    ax.set_xticks(range(len(datasets)))
+    ax.set_xticklabels([DATASET_SPECS[k]["label"] for k in datasets], rotation=30, ha="right")
+    ax.set_yticks(range(len(genes)))
+    ax.set_yticklabels(genes, fontsize=7)
+    ax.set_ylim(-1, len(genes))
+    ax.invert_yaxis()
+    ax.set_title(title, fontsize=9)
+    return plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=vmax))
+
+
+def _dotplot_figures(
+    sub: pd.DataFrame,
+    config: dict[str, Any],
+    *,
+    title: str,
+    genes_per_page: int = DEFAULT_GENES_PER_PAGE,
+) -> list[Any]:
+    """Build one or more dot-plot figures (paginated by gene count)."""
+    import matplotlib.pyplot as plt
+
+    datasets = _datasets_in_table(sub)
+    if sub.empty or not datasets:
+        return []
+
+    vmax = _dotplot_vmax(sub, datasets)
+    genes = sub["gene"].tolist()
+    chunks = [
+        genes[i : i + genes_per_page]
+        for i in range(0, len(genes), genes_per_page)
+    ]
+    figures: list[Any] = []
+    for page_idx, chunk_genes in enumerate(chunks, start=1):
+        chunk = sub[sub["gene"].isin(chunk_genes)].copy()
+        chunk["_order"] = chunk["gene"].map({g: i for i, g in enumerate(chunk_genes)})
+        chunk = chunk.sort_values("_order").drop(columns="_order")
+        page_title = title
+        if len(chunks) > 1:
+            page_title += f"\n(page {page_idx}/{len(chunks)})"
+        n_genes = len(chunk_genes)
+        fig, ax = plt.subplots(
+            figsize=(1.6 + 1.5 * len(datasets), 1.0 + 0.28 * max(n_genes, 1)),
+        )
+        sm = _draw_dotplot_on_axes(
+            ax, chunk, config, datasets=datasets, title=page_title, vmax=vmax,
+        )
+        fig.colorbar(sm, ax=ax, label="mean log2(CPM+1)", fraction=0.04, pad=0.02)
+        fig.tight_layout()
+        figures.append(fig)
+    return figures
+
+
+def _text_page_figure(
+    title: str,
+    lines: list[str],
+    *,
+    figsize: tuple[float, float] = (11.0, 8.5),
+) -> Any:
+    """Simple text-only matplotlib page for PDF section dividers / cover."""
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.axis("off")
+    ax.set_title(title, fontsize=14, fontweight="bold", loc="left", pad=24)
+    body = "\n".join(lines)
+    ax.text(0.02, 0.95, body, transform=ax.transAxes, va="top", ha="left", fontsize=10)
+    fig.tight_layout()
+    return fig
+
+
+def _placeholder_page_figure(
+    *,
+    cell_type: str,
+    region: str | None,
+    category: str,
+    family: str,
+) -> Any:
+    region_lbl = region or "(region-pooled)"
+    cat_lbl = CATEGORY_LABELS.get(category, category)
+    lines = [
+        f"Cell type: {cell_type}",
+        f"Region: {region_lbl}",
+        f"Category: {cat_lbl}",
+        f"Family: {family}",
+        "",
+        "No high- or medium-confidence expression for this family at this target.",
+        "(Placeholder page — family is in the gene panel but no cross-validated detection.)",
+    ]
+    return _text_page_figure(
+        f"{cat_lbl} — {family}",
+        lines,
+    )
+
+
+def _family_dotplot_title(
+    *,
+    cell_type: str,
+    region: str | None,
+    category: str,
+    family: str,
+    n_genes: int,
+) -> str:
+    region_lbl = region or "(region-pooled)"
+    cat_lbl = CATEGORY_LABELS.get(category, category)
+    return (
+        f"{cell_type} × {region_lbl}\n"
+        f"{cat_lbl}: {family} — high/medium confidence (n={n_genes})\n"
+        "size = fraction expressing, colour = mean log2(CPM+1); red ring = Allen MERFISH imputed"
+    )
+
+
+def _placeholder_family_csv(family: str, category: str) -> pd.DataFrame:
+    return pd.DataFrame(
+        [{
+            "gene": "",
+            "family": family,
+            "category": category,
+            "confidence_tier": "none",
+            "note": "no high/medium expression for this target",
+        }]
+    )
+
+
+def _category_summary_rows(
+    families: list[str],
+    family_rows: dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    rows = []
+    for fam in families:
+        df = family_rows.get(fam)
+        if df is None or df.empty or (df["gene"] == "").all():
+            rows.append({
+                "family": fam,
+                "n_high": 0,
+                "n_medium": 0,
+                "n_expressed": 0,
+            })
+            continue
+        tiers = df["confidence_tier"]
+        rows.append({
+            "family": fam,
+            "n_high": int((tiers == "high").sum()),
+            "n_medium": int((tiers == "medium").sum()),
+            "n_expressed": int(len(df)),
+        })
+    return pd.DataFrame(rows)
+
+
+def export_target_report(
+    evidence: pd.DataFrame,
+    config: dict[str, Any],
+    *,
+    cell_type: str,
+    region: str | None = None,
+    output_dir: Path | str,
+    genes_per_page: int = DEFAULT_GENES_PER_PAGE,
+) -> dict[str, Any]:
+    """Write organized target outputs: subfolders, per-family CSVs, master PDF.
+
+    Layout under ``{output_dir}/targets/{cell_type}__{region}/``:
+
+    - ``evidence_target.csv`` — all tiers for the target
+    - ``statement.txt`` — textual scaffold
+    - ``receptors/{family}.csv``, ``excitability/{family}.csv`` — high/medium only
+    - ``figures/evidence_by_family.pdf`` — one page per family (+ placeholders)
+
+    Returns a dict of key paths (``target_dir``, ``pdf``, ``csvs``, ...).
+    """
+    from matplotlib.backends.backend_pdf import PdfPages
+    import matplotlib.pyplot as plt
+
+    output_dir = Path(output_dir)
+    slug = _target_slug(cell_type, region)
+    target_dir = output_dir / "targets" / slug
+    figures_dir = target_dir / "figures"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+
+    target_all = target_evidence(evidence, cell_type=cell_type, region=region)
+    target_expressed = target_all[target_all["confidence_tier"].isin(EXPRESSED_TIERS)].copy()
+
+    summary = summarize_target(evidence, cell_type=cell_type, region=region)
+    statement_path = target_dir / "statement.txt"
+    statement_path.write_text(statement_scaffold(summary) + "\n", encoding="utf-8")
+
+    evidence_csv = target_dir / "evidence_target.csv"
+    target_all.to_csv(evidence_csv, index=False)
+
+    families_by_cat = _families_by_category(config)
+    family_csv_paths: dict[str, Path] = {}
+    category_summary_paths: dict[str, Path] = {}
+
+    pdf_path = figures_dir / "evidence_by_family.pdf"
+    synth_cfg = config.get("synthesis", {}) or {}
+    min_frac = float(synth_cfg.get("min_frac", DEFAULT_MIN_FRAC))
+    min_mean = float(synth_cfg.get("min_mean", DEFAULT_MIN_MEAN))
+
+    cover_lines = [
+        f"Cell type: {cell_type}",
+        f"Region: {region or '(region-pooled)'}",
+        f"Cell type level: {config.get('cell_type_level', '')}",
+        f"Brain areas (config): {', '.join(config.get('brain_areas') or [])}",
+        "",
+        f"Genes considered: {summary['n_genes_considered']}",
+        f"High confidence: {len(summary['tiers']['high'])}",
+        f"Medium confidence: {len(summary['tiers']['medium'])}",
+        "",
+        f"Detection thresholds: frac ≥ {min_frac}, mean ≥ {min_mean}",
+        "Family figures include high/medium tiers only; empty families get placeholder pages.",
+        "",
+        f"Datasets: {', '.join(DATASET_SPECS[k]['label'] for k in _datasets_in_table(target_all))}",
+    ]
+
+    with PdfPages(pdf_path) as pdf:
+        pdf.savefig(_text_page_figure("Cross-dataset evidence report", cover_lines))
+        plt.close()
+
+        for category, families in families_by_cat.items():
+            cat_lbl = CATEGORY_LABELS.get(category, category)
+            cat_dir = target_dir / category
+            cat_dir.mkdir(parents=True, exist_ok=True)
+            family_rows: dict[str, pd.DataFrame] = {}
+
+            pdf.savefig(_text_page_figure(
+                cat_lbl,
+                [
+                    f"Section: {category}",
+                    f"Families in panel: {len(families)}",
+                    "Following pages: one dot plot per family (high/medium confidence genes).",
+                ],
+            ))
+            plt.close()
+
+            for family in families:
+                fam_sub = target_expressed[target_expressed["family"] == family].copy()
+                csv_path = cat_dir / f"{_safe_family_filename(family)}.csv"
+
+                if fam_sub.empty:
+                    stub = _placeholder_family_csv(family, category)
+                    stub.to_csv(csv_path, index=False)
+                    family_rows[family] = stub
+                    family_csv_paths[f"{category}/{family}"] = csv_path
+                    pdf.savefig(_placeholder_page_figure(
+                        cell_type=cell_type,
+                        region=region,
+                        category=category,
+                        family=family,
+                    ))
+                    plt.close()
+                    continue
+
+                fam_sub = (
+                    fam_sub.assign(
+                        _tier_order=fam_sub["confidence_tier"].map({"high": 0, "medium": 1}),
+                    )
+                    .sort_values(["_tier_order", "gene"])
+                    .drop(columns="_tier_order")
+                )
+                fam_sub.to_csv(csv_path, index=False)
+                family_rows[family] = fam_sub
+                family_csv_paths[f"{category}/{family}"] = csv_path
+
+                title = _family_dotplot_title(
+                    cell_type=cell_type,
+                    region=region,
+                    category=category,
+                    family=family,
+                    n_genes=len(fam_sub),
+                )
+                for fig in _dotplot_figures(
+                    fam_sub, config, title=title, genes_per_page=genes_per_page,
+                ):
+                    pdf.savefig(fig)
+                    plt.close(fig)
+
+            summary_df = _category_summary_rows(families, family_rows)
+            summary_csv = cat_dir / "_category_summary.csv"
+            summary_df.to_csv(summary_csv, index=False)
+            category_summary_paths[category] = summary_csv
+
+    return {
+        "target_dir": target_dir.resolve(),
+        "slug": slug,
+        "pdf": pdf_path.resolve(),
+        "evidence_csv": evidence_csv.resolve(),
+        "statement": statement_path.resolve(),
+        "family_csvs": family_csv_paths,
+        "category_summaries": category_summary_paths,
+    }
+
+
 def plot_evidence_dotplot(
     evidence: pd.DataFrame,
     config: dict[str, Any],
@@ -376,7 +750,7 @@ def plot_evidence_dotplot(
     import matplotlib.pyplot as plt
 
     sub = target_evidence(evidence, cell_type=cell_type, region=region)
-    sub = sub[sub["confidence_tier"] != "none"]
+    sub = sub[sub["confidence_tier"].isin(EXPRESSED_TIERS)]
     if sub.empty:
         warnings.warn(
             f"No expressed genes for {cell_type!r} / {region!r}; skipping dot plot.",
@@ -387,56 +761,25 @@ def plot_evidence_dotplot(
     if len(sub) > max_genes:
         sub = sub.head(max_genes)
 
-    datasets = [k for k in DATASET_SPECS if f"{k}_mean" in sub.columns]
-    genes = sub["gene"].tolist()
-    gene_idx = {g: i for i, g in enumerate(genes)}
-
-    cmap = config.get("output", {}).get("heatmap_cmap", "viridis")
-    dpi = config.get("output", {}).get("dpi", 150)
-    fig, ax = plt.subplots(figsize=(1.6 + 1.5 * len(datasets), 1.0 + 0.28 * len(genes)))
-
-    all_means = sub[[f"{k}_mean" for k in datasets]].to_numpy(dtype=float)
-    finite = all_means[np.isfinite(all_means)]
-    vmax = float(np.nanpercentile(finite, 99)) if finite.size else 1.0
-    vmax = vmax or 1.0
-
-    for j, key in enumerate(datasets):
-        means = sub[f"{key}_mean"].to_numpy(dtype=float)
-        fracs = sub[f"{key}_frac"].to_numpy(dtype=float)
-        sources = sub[f"{key}_source"].to_numpy()
-        for g, m, fr, src in zip(genes, means, fracs, sources):
-            if not np.isfinite(m):
-                continue
-            size = 30.0 + 320.0 * (0.0 if not np.isfinite(fr) else fr)
-            ax.scatter(
-                j, gene_idx[g], s=size, c=[m], cmap=cmap, vmin=0, vmax=vmax,
-                edgecolors="red" if src == "imputed" else "black",
-                linewidths=1.1 if src == "imputed" else 0.4,
-            )
-
-    ax.set_xticks(range(len(datasets)))
-    ax.set_xticklabels([DATASET_SPECS[k]["label"] for k in datasets], rotation=30, ha="right")
-    ax.set_yticks(range(len(genes)))
-    ax.set_yticklabels(genes, fontsize=7)
-    ax.set_ylim(-1, len(genes))
-    ax.invert_yaxis()
     region_lbl = region or "(pooled)"
-    ax.set_title(
-        f"{cell_type} × {region_lbl}\nsize = fraction expressing, colour = mean log2(CPM+1); "
-        "red ring = Allen imputed",
-        fontsize=9,
+    title = (
+        f"{cell_type} × {region_lbl}\n"
+        "size = fraction expressing, colour = mean log2(CPM+1); "
+        "red ring = Allen imputed"
     )
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=vmax))
-    fig.colorbar(sm, ax=ax, label="mean log2(CPM+1)", fraction=0.04, pad=0.02)
-    fig.tight_layout()
+    figures = _dotplot_figures(sub, config, title=title, genes_per_page=max_genes)
+    if not figures:
+        return None
+    fig = figures[0]
 
     if save_path is None:
         out_root = resolve_output_dir(output_dir=output_dir, cfg=config if output_dir is None else None)
-        safe_ct = "".join(c if c.isalnum() else "-" for c in cell_type).strip("-")
-        safe_rg = (region or "pooled").replace("/", "-")
-        save_path = Path(out_root) / f"evidence_dotplot_{safe_ct}_{safe_rg}.png"
+        save_path = Path(out_root) / f"evidence_dotplot_{_target_slug(cell_type, region)}.png"
     save_path = Path(save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
+    dpi = config.get("output", {}).get("dpi", 150)
     fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
+    for extra in figures[1:]:
+        plt.close(extra)
     return save_path
