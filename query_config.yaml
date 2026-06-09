@@ -430,8 +430,14 @@ brain_areas:
 # Cell type resolution
 # Choose the level of the Allen taxonomy hierarchy to group by.
 # Options: class | subclass | supertype | cluster
+#
+# Class (~34): neurotransmitter type + broad origin (glutamatergic, GABAergic, non-neuronal) — too coarse for any projection-specific question.
+# Subclass (~338): layer + projection identity first appear here (L2/3 IT CTX, L5 ET CTX, Pvalb, Sst…) but lumps the same cell type across all cortical areas.
+# Supertype (~1,201): subclass split into partially area-resolved groups — the level your config uses, balancing statistical power against granularity.
+# Cluster (~5,322): maximally fine, often area-specific leaf nodes, but cell counts per area get small for lowly expressed genes.
+
 # -------------------------------------------------------------------
-cell_type_level: supertype
+cell_type_level: subclass
 
 # Optional loose filter: keep cell types whose name contains any substring below.
 # Use [] or omit to include all types at cell_type_level.

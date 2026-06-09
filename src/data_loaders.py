@@ -539,7 +539,18 @@ def _load_merfish_h5ad_slice(
         if not ensembl_ids:
             return None
 
-        subset = adata[cells_present, ensembl_ids].to_memory()
+        source_label = "imputed" if imputed else "measured"
+        print(
+            f"MERFISH {source_label}: reading {len(cells_present):,} cells × "
+            f"{len(ensembl_ids)} genes from {path.name} "
+            f"(row-first slice; imputed matrix is ~47 GB)…",
+            flush=True,
+        )
+        # CSR-backed h5ad: combined [cells, genes].to_memory() can scan the entire
+        # on-disk matrix (hours, 0% CPU). Load filtered rows first, then columns.
+        row_subset = adata[cells_present, :].to_memory()
+        subset = row_subset[:, ensembl_ids].copy()
+        del row_subset
         symbol_by_ensembl = dict(
             zip(subset.var_names, subset.var["gene_symbol"].astype(str))
         )
@@ -574,6 +585,10 @@ def load_merfish_expression_subset(
 
     frames: list[ad.AnnData] = []
     if availability["measured"]:
+        print(
+            f"Loading {len(availability['measured'])} measured MERFISH genes…",
+            flush=True,
+        )
         measured = _load_merfish_h5ad_slice(
             cache,
             config,
@@ -585,6 +600,11 @@ def load_merfish_expression_subset(
             frames.append(measured)
 
     if availability["imputed"]:
+        print(
+            f"Loading {len(availability['imputed'])} imputed MERFISH genes "
+            f"(use_imputed_merfish=true; first read can take several minutes)…",
+            flush=True,
+        )
         imputed = _load_merfish_h5ad_slice(
             cache,
             config,

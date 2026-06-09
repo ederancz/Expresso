@@ -68,7 +68,11 @@ DATASET_SPECS: dict[str, dict[str, Any]] = {
 DEFAULT_MIN_FRAC = 0.25
 DEFAULT_MIN_MEAN = 1.0
 DEFAULT_GENES_PER_PAGE = 25
+MIN_GENE_ROWS = 10  # minimum vertical slots so sparse families fill an A4 page
 EXPRESSED_TIERS = frozenset({"high", "medium"})
+
+# A4 landscape (inches) — every PDF page uses this size for consistent printing.
+A4_LANDSCAPE: tuple[float, float] = (11.69, 8.27)
 
 CATEGORY_LABELS: dict[str, str] = {
     "receptors": "Neuromodulatory / synaptic receptors",
@@ -405,6 +409,20 @@ def _dotplot_vmax(sub: pd.DataFrame, datasets: list[str]) -> float:
     return vmax or 1.0
 
 
+def _gene_y_positions(genes: list[str], *, min_rows: int = MIN_GENE_ROWS) -> tuple[dict[str, float], int]:
+    """Spread genes evenly over at least ``min_rows`` vertical slots."""
+    n = len(genes)
+    if n == 0:
+        return {}, min_rows
+    span = max(n, min_rows)
+    if n == 1:
+        return {genes[0]: (span - 1) / 2}, span
+    return {
+        g: i * (span - 1) / (n - 1)
+        for i, g in enumerate(genes)
+    }, span
+
+
 def _draw_dotplot_on_axes(
     ax: Any,
     sub: pd.DataFrame,
@@ -413,12 +431,13 @@ def _draw_dotplot_on_axes(
     datasets: list[str],
     title: str,
     vmax: float | None = None,
+    min_rows: int = MIN_GENE_ROWS,
 ) -> Any:
     """Draw genes × datasets dot plot on ``ax``; returns ScalarMappable for colorbar."""
     import matplotlib.pyplot as plt
 
     genes = sub["gene"].tolist()
-    gene_idx = {g: i for i, g in enumerate(genes)}
+    y_pos, span = _gene_y_positions(genes, min_rows=min_rows)
     cmap = config.get("output", {}).get("heatmap_cmap", "viridis")
     if vmax is None:
         vmax = _dotplot_vmax(sub, datasets)
@@ -430,26 +449,34 @@ def _draw_dotplot_on_axes(
         for g, m, fr, src in zip(genes, means, fracs, sources):
             if not np.isfinite(m):
                 continue
-            size = 30.0 + 320.0 * (0.0 if not np.isfinite(fr) else fr)
+            size = 80.0 + 420.0 * (0.0 if not np.isfinite(fr) else fr)
             ax.scatter(
                 j,
-                gene_idx[g],
+                y_pos[g],
                 s=size,
                 c=[m],
                 cmap=cmap,
                 vmin=0,
                 vmax=vmax,
                 edgecolors="red" if src == "imputed" else "black",
-                linewidths=1.1 if src == "imputed" else 0.4,
+                linewidths=1.2 if src == "imputed" else 0.5,
             )
 
     ax.set_xticks(range(len(datasets)))
-    ax.set_xticklabels([DATASET_SPECS[k]["label"] for k in datasets], rotation=30, ha="right")
-    ax.set_yticks(range(len(genes)))
-    ax.set_yticklabels(genes, fontsize=7)
-    ax.set_ylim(-1, len(genes))
+    ax.set_xticklabels(
+        [DATASET_SPECS[k]["label"] for k in datasets],
+        rotation=25,
+        ha="right",
+        fontsize=9,
+    )
+    ax.set_yticks([y_pos[g] for g in genes])
+    label_fs = min(11, max(8, int(180 / max(len(genes), 1))))
+    ax.set_yticklabels(genes, fontsize=label_fs)
+    ax.set_ylim(-0.5, span - 0.5)
     ax.invert_yaxis()
-    ax.set_title(title, fontsize=9)
+    ax.set_title(title, fontsize=11, pad=10)
+    ax.set_xlabel("Dataset", fontsize=9)
+    ax.grid(axis="y", linestyle=":", alpha=0.35)
     return plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=vmax))
 
 
@@ -460,7 +487,7 @@ def _dotplot_figures(
     title: str,
     genes_per_page: int = DEFAULT_GENES_PER_PAGE,
 ) -> list[Any]:
-    """Build one or more dot-plot figures (paginated by gene count)."""
+    """Build one or more A4 landscape dot-plot figures (paginated by gene count)."""
     import matplotlib.pyplot as plt
 
     datasets = _datasets_in_table(sub)
@@ -481,15 +508,14 @@ def _dotplot_figures(
         page_title = title
         if len(chunks) > 1:
             page_title += f"\n(page {page_idx}/{len(chunks)})"
-        n_genes = len(chunk_genes)
-        fig, ax = plt.subplots(
-            figsize=(1.6 + 1.5 * len(datasets), 1.0 + 0.28 * max(n_genes, 1)),
-        )
+        # Full A4 landscape page; plot area inset for title + colorbar.
+        fig = plt.figure(figsize=A4_LANDSCAPE)
+        ax = fig.add_axes([0.07, 0.10, 0.76, 0.78])
         sm = _draw_dotplot_on_axes(
             ax, chunk, config, datasets=datasets, title=page_title, vmax=vmax,
         )
-        fig.colorbar(sm, ax=ax, label="mean log2(CPM+1)", fraction=0.04, pad=0.02)
-        fig.tight_layout()
+        cax = fig.add_axes([0.86, 0.10, 0.025, 0.78])
+        fig.colorbar(sm, cax=cax, label="mean log2(CPM+1)")
         figures.append(fig)
     return figures
 
@@ -498,7 +524,7 @@ def _text_page_figure(
     title: str,
     lines: list[str],
     *,
-    figsize: tuple[float, float] = (11.0, 8.5),
+    figsize: tuple[float, float] = A4_LANDSCAPE,
 ) -> Any:
     """Simple text-only matplotlib page for PDF section dividers / cover."""
     import matplotlib.pyplot as plt
@@ -588,6 +614,146 @@ def _category_summary_rows(
             "n_expressed": int(len(df)),
         })
     return pd.DataFrame(rows)
+
+
+def list_report_targets(
+    evidence: pd.DataFrame,
+    config: dict[str, Any],
+    *,
+    regions: list[str] | None = None,
+    cell_types: list[str] | None = None,
+    require_expressed: bool = False,
+) -> list[tuple[str, str]]:
+    """Discover ``(cell_type, brain_area)`` pairs for per-target report export.
+
+    - **Regions** default to ``config['brain_areas']`` (CCF acronyms shared across
+      Allen MERFISH, Vizgen, and Zhuang after upstream aggregation). Allen scRNA
+      rows are broadcast to each region with identical expression values.
+    - **Cell types** are narrowed by ``cell_type_name_filter`` in config (substring
+      match), then by optional explicit ``cell_types``.
+    - Only pairs present in ``evidence`` are returned.
+    """
+    from src.utils import filter_cell_types_by_name
+
+    regions = list(regions if regions is not None else config.get("brain_areas") or [])
+    if not regions:
+        raise ValueError("No regions specified and config has no brain_areas")
+
+    sub = evidence[evidence["brain_area"].isin(regions)].copy()
+    if require_expressed:
+        sub = sub[sub["confidence_tier"].isin(EXPRESSED_TIERS)]
+
+    ct_names = filter_cell_types_by_name(sub["cell_type"].unique(), config)
+    if cell_types is not None:
+        allow = set(cell_types)
+        ct_names = [ct for ct in ct_names if ct in allow]
+
+    if not ct_names:
+        return []
+
+    pairs = (
+        sub.loc[sub["cell_type"].isin(ct_names), ["cell_type", "brain_area"]]
+        .drop_duplicates()
+        .sort_values(["brain_area", "cell_type"], kind="stable")
+    )
+    return list(zip(pairs["cell_type"].tolist(), pairs["brain_area"].tolist()))
+
+
+def export_all_target_reports(
+    evidence: pd.DataFrame,
+    config: dict[str, Any],
+    *,
+    output_dir: Path | str,
+    regions: list[str] | None = None,
+    cell_types: list[str] | None = None,
+    require_expressed: bool = False,
+    skip_unexpressed: bool = False,
+    genes_per_page: int = DEFAULT_GENES_PER_PAGE,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """Export organized reports for every discovered (cell_type, region) target.
+
+    Writes one subfolder per target under ``{output_dir}/targets/`` and a
+    ``targets/_index.csv`` manifest (paths, tier counts, skip reasons).
+
+    Set ``skip_unexpressed=True`` to omit targets with no high/medium genes
+    (avoids large placeholder-only PDFs).
+    """
+    output_dir = Path(output_dir)
+    targets = list_report_targets(
+        evidence,
+        config,
+        regions=regions,
+        cell_types=cell_types,
+        require_expressed=require_expressed,
+    )
+    if not targets:
+        warnings.warn(
+            "list_report_targets returned no (cell_type, region) pairs; "
+            "check brain_areas, cell_type_name_filter, and evidence contents.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return pd.DataFrame()
+
+    index_rows: list[dict[str, Any]] = []
+    n = len(targets)
+    for i, (cell_type, region) in enumerate(targets, start=1):
+        sub = target_evidence(evidence, cell_type=cell_type, region=region)
+        n_high = int((sub["confidence_tier"] == "high").sum())
+        n_medium = int((sub["confidence_tier"] == "medium").sum())
+        n_expressed = n_high + n_medium
+
+        if skip_unexpressed and n_expressed == 0:
+            index_rows.append({
+                "cell_type": cell_type,
+                "brain_area": region,
+                "slug": _target_slug(cell_type, region),
+                "skipped": True,
+                "skip_reason": "no high/medium expression",
+                "n_high": 0,
+                "n_medium": 0,
+                "n_expressed": 0,
+                "target_dir": "",
+                "pdf": "",
+            })
+            if verbose:
+                print(f"[{i}/{n}] skip (unexpressed): {cell_type} × {region}")
+            continue
+
+        if verbose:
+            print(f"[{i}/{n}] {cell_type} × {region}  (high={n_high}, medium={n_medium})")
+
+        report = export_target_report(
+            evidence,
+            config,
+            cell_type=cell_type,
+            region=region,
+            output_dir=output_dir,
+            genes_per_page=genes_per_page,
+        )
+        index_rows.append({
+            "cell_type": cell_type,
+            "brain_area": region,
+            "slug": report["slug"],
+            "skipped": False,
+            "skip_reason": "",
+            "n_high": n_high,
+            "n_medium": n_medium,
+            "n_expressed": n_expressed,
+            "target_dir": str(report["target_dir"]),
+            "pdf": str(report["pdf"]),
+        })
+
+    index_df = pd.DataFrame(index_rows)
+    index_dir = output_dir / "targets"
+    index_dir.mkdir(parents=True, exist_ok=True)
+    index_path = index_dir / "_index.csv"
+    index_df.to_csv(index_path, index=False)
+    if verbose:
+        exported = int((~index_df["skipped"]).sum()) if "skipped" in index_df.columns else len(index_df)
+        print(f"\nExported {exported} / {n} target reports → {index_path}")
+    return index_df
 
 
 def export_target_report(
