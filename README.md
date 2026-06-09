@@ -33,7 +33,15 @@ With Python 3.11 or 3.12 active:
 pip install -r requirements.txt
 ```
 
-For Milestone 3 (Vizgen), no extra pip packages are needed beyond `requirements.txt`. Download Vizgen CSVs and set `data.vizgen_data_dir` in the config.
+For Milestone 3 (Vizgen), no extra pip packages are needed beyond `requirements.txt`. Download Vizgen CSVs into `data.vizgen_data_dir` (see below).
+
+Paths are in [`query_config.yaml`](query_config.yaml):
+
+| Path | Config key | Purpose |
+|------|------------|---------|
+| `…/Ach_NE_Marius_Felix/exploration` | `output.output_dir` | Run outputs, parquets, figures |
+| `…/Data/expresso_data/abc_atlas_cache` | `data.cache_dir` | ABC Atlas downloads |
+| `…/Data/expresso_data/vizgen_cache` | `data.vizgen_data_dir` | Vizgen CSV pairs |
 
 Edit the config for genes and brain regions. The unified
 [`query_config.yaml`](query_config.yaml) is the single source of truth: its

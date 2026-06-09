@@ -1,8 +1,6 @@
 # Expresso — Repository Deep Dive
 
-A technical guide to the **Expresso** codebase: purpose, architecture, data flows, module APIs, configuration, and operational notes. For quick setup, see [README.md](README.md). For the most recent code/science review and the rationale behind correctness fixes, see [REVIEW.md](REVIEW.md).
-
-> **Note:** parts of this guide predate recent changes. Authoritative current behaviour: the gene panel lives under the top-level `gene_panel` key (legacy `receptors`/`excitability` still accepted) so both the receptor and excitability configs run through the same pipeline; aggregates now include `frac_expressing` and `n_cells`; cross-reference plots lead with Spearman ρ; Vizgen expression is normalised to full-panel library size; and notebook 05 performs cross-dataset synthesis. See [REVIEW.md](REVIEW.md) for details.
+A technical guide to the **Expresso** codebase: purpose, architecture, data flows, module APIs, configuration, and operational notes. For quick setup, see [README.md](README.md). For the code/science review and the rationale behind correctness fixes, see [REVIEW.md](REVIEW.md).
 
 ---
 
@@ -16,32 +14,36 @@ A technical guide to the **Expresso** codebase: purpose, architecture, data flow
 6. [Module reference](#module-reference)
 7. [Milestone 1 — scRNA-seq heatmaps](#milestone-1--scrna-seq-heatmaps)
 8. [Brain area mapping (scRNA caveat)](#brain-area-mapping-scrna-caveat)
-9. [Milestone 2 — MERFISH spatial maps](#milestone-2--merfish-spatial-maps)
-10. [Plotting layer](#plotting-layer)
-11. [Notebooks](#notebooks)
-12. [Outputs and caching](#outputs-and-caching)
-13. [Environment and dependencies](#environment-and-dependencies)
-14. [Smoke testing](#smoke-testing)
-15. [Future milestones](#future-milestones)
-16. [Known limitations and gotchas](#known-limitations-and-gotchas)
-17. [Suggested workflows](#suggested-workflows)
+9. [Milestone 2 — MERFISH heatmaps](#milestone-2--merfish-heatmaps)
+10. [Milestones 3–4 — Cross-reference](#milestones-34--cross-reference)
+11. [Milestone 5 — Synthesis](#milestone-5--synthesis)
+12. [Plotting layer](#plotting-layer)
+13. [Notebooks](#notebooks)
+14. [Outputs and caching](#outputs-and-caching)
+15. [Environment and dependencies](#environment-and-dependencies)
+16. [Smoke testing](#smoke-testing)
+17. [Known limitations and gotchas](#known-limitations-and-gotchas)
+18. [Suggested workflows](#suggested-workflows)
+19. [Document map](#document-map)
 
 ---
 
 ## What this project does
 
-Expresso queries **receptor gene expression** across **mouse brain areas** and **cell types** using the [Allen Brain Cell Atlas (ABC Atlas)](https://alleninstitute.github.io/abc_atlas_access/). It is designed as a **config-driven analysis pipeline**:
+Expresso queries **receptor** and **excitability** gene expression across **mouse brain areas** and **cell types** using the [Allen Brain Cell Atlas (ABC Atlas)](https://alleninstitute.github.io/abc_atlas_access/) and complementary MERFISH datasets (Allen, Vizgen, Zhuang). The common reference framework is the **Allen CCF** (brain regions) and the **Allen cell-type taxonomy** (class → subclass → supertype → cluster).
 
-- **No hard-coded genes or regions** in notebook logic — everything comes from `query_config.yaml`.
+It is designed as a **config-driven analysis pipeline**:
+
+- **No hard-coded genes or regions** in notebook logic — everything comes from [`query_config.yaml`](query_config.yaml).
 - **Memory-efficient I/O** — expression matrices are read in backed mode and sliced to only the genes and cells needed.
-- **Two primary analysis modes** (implemented):
-  - **Milestone 1:** scRNA-seq heatmaps (cell type × brain area)
-  - **Milestone 2:** MERFISH spatial scatter maps (whole-brain CCF coordinates)
-- **Two cross-reference modes** (planned):
-  - **Milestone 3:** Vizgen MERFISH Mouse Receptor Map
-  - **Milestone 4:** Zhuang MERFISH replicates via ABC Atlas
+- **Five implemented milestones:**
+  - **M1:** Allen scRNA-seq heatmaps (cell type × brain area)
+  - **M2:** Allen MERFISH heatmaps (cell type × CCF brain area; native sub-region resolution)
+  - **M3:** Vizgen MERFISH cross-reference vs Allen (label transfer + concordance plots)
+  - **M4:** Zhuang MERFISH cross-reference vs Allen (replicate-averaged concordance)
+  - **M5:** Cross-dataset synthesis — evidence table, confidence tiers, statement scaffold
 
-The project name reflects its focus: **express**ion of neurotransmitter **receptors** (dopamine, serotonin, glutamate, GABA, opioid, cannabinoid, acetylcholine, adrenergic families).
+The end goal is to support claims of the form: *"cell type C in region R expresses gene set X (receptors + excitability channels), cross-validated across independent datasets, implying defined neuromodulatory influences and intrinsic excitability profiles."*
 
 ---
 
@@ -51,36 +53,39 @@ The project name reflects its focus: **express**ion of neurotransmitter **recept
 Expresso/
 ├── README.md                      # Quick start, setup, notebook index
 ├── REPOSITORY_GUIDE.md            # This document
-├── REVIEW.md                      # Code/science review + correctness-fix rationale
-├── query_config.yaml              # Unified config: gene_panel (receptors + excitability), regions, output, data
+├── REVIEW.md                      # Code/science review + fix status
+├── query_config.yaml              # Unified config: gene_panel, regions, output, data
+├── excitability_genes.md          # Excitability gene mechanisms, tiers, references
+├── receptor_excitability.md       # Receptor biology companion (receptors category)
 ├── pyproject.toml                 # Package metadata (requires-python >=3.11,<3.13)
 ├── environment.yml                # Conda env (Python 3.12 + pip requirements)
-├── requirements.txt               # Core deps (Milestones 1–3)
+├── requirements.txt               # Core deps
 ├── .python-version                # pyenv hint (3.12)
 │
 ├── src/                           # Shared library code
-│   ├── config.py                  # YAML load/validate, path helpers
-│   ├── data_loaders.py            # ABC Atlas I/O, aggregation
-│   ├── plotting.py                # Heatmaps and spatial plots
+│   ├── config.py                  # YAML load/validate, run dirs, parquet discovery
+│   ├── data_loaders.py            # ABC Atlas I/O, aggregation, label transfer
+│   ├── plotting.py                # Heatmaps, cross-ref scatters, spatial helpers
+│   ├── synthesis.py               # Cross-dataset evidence table + confidence tiers
 │   └── utils.py                   # Gene ID resolution, brain-area mapping
 │
 ├── notebooks/
-│   ├── 01_scrna_heatmaps.ipynb    # Milestone 1 — implemented, run successfully
-│   ├── 02_merfish_spatial.ipynb   # Milestone 2 — implemented, run successfully
-│   ├── 03_vizgen_crossref.ipynb   # Milestone 3 — Vizgen cross-ref vs Allen
-│   └── 04_zhuang_crossref.ipynb   # Milestone 4 — TODO stub
+│   ├── 01_scrna_heatmaps.ipynb    # M1 — Allen scRNA heatmaps
+│   ├── 02_merfish_spatial.ipynb   # M2 — Allen MERFISH heatmaps (filename is legacy)
+│   ├── 03_vizgen_crossref.ipynb   # M3 — Vizgen vs Allen cross-ref
+│   ├── 04_zhuang_crossref.ipynb   # M4 — Zhuang vs Allen cross-ref
+│   └── 05_synthesis.ipynb         # M5 — cross-dataset synthesis
 │
 ├── scripts/
 │   └── verify_setup.py            # Smoke test (config, cache, optional Drd2 load)
 │
 ├── data/
-│   ├── .gitkeep
-│   └── aggregated_scrna.parquet   # Cached M1 output (when save_processed_data: true)
+│   └── .gitkeep                   # Repo-local cache placeholder only
 │
-└── figures/                       # Default figure dir (gitignored *.png); notebooks may override
+└── figures/                       # Default figure dir (gitignored *.png)
 ```
 
-**Git ignores:** `figures/*.png`, standard Python/Jupyter artifacts. ABC Atlas cache (`~/abc_atlas_cache` by default) lives outside the repo.
+**Git ignores:** `figures/*.png`, standard Python/Jupyter artifacts. Downloaded caches live under `/Users/rancze/Documents/Data/expresso_data/`; notebook outputs under `output.output_dir` (see [Outputs and caching](#outputs-and-caching)).
 
 ---
 
@@ -88,37 +93,42 @@ Expresso/
 
 ```
                          query_config.yaml
+                    (gene_panel: receptors + excitability)
                               │
                               ▼
                        src/config.py
-                    (load, validate, derive
-                     _all_genes, _families)
+              (load, validate, derive _all_genes, _categories,
+               start_run → timestamped run dir + run_manifest.json)
                               │
-              ┌───────────────┴───────────────┐
-              ▼                               ▼
-     notebooks/01_scrna              notebooks/02_merfish
-              │                               │
-              ▼                               ▼
-     src/data_loaders.py              src/data_loaders.py
-     (WMB-10Xv3 partial load)        (single-gene MERFISH load)
-              │                               │
-              ▼                               ▼
-     src/plotting.py                  src/plotting.py
-     (heatmaps)                       (spatial scatter + panels)
-              │                               │
-              ▼                               ▼
-     figures/, data/*.parquet          figures/spatial_*.png
+     ┌────────────┬───────────┼───────────┬────────────┐
+     ▼            ▼           ▼           ▼            ▼
+  nb 01        nb 02       nb 03       nb 04        nb 05
+  scRNA        MERFISH     Vizgen      Zhuang       synthesis
+     │            │           │           │            │
+     ▼            ▼           ▼           ▼            ▼
+ data_loaders  data_loaders data_loaders data_loaders synthesis.py
+     │            │           │           │            │
+     ▼            ▼           ▼           ▼            ▼
+ plotting.py   plotting.py  plotting.py plotting.py  dot plot +
+ (heatmaps)    (heatmaps +   (heatmaps +  (heatmaps +  statement
+                cross-ref)    cross-ref)   cross-ref)   scaffold
+     │            │           │           │
+     └────────────┴───────────┴───────────┘
+                         │
+              aggregated_*.parquet per run
+              (discovered by find_prior_run_parquet)
 ```
 
 **Design principles:**
 
 | Principle | How it is applied |
 |-----------|-------------------|
-| Config-driven | Genes grouped by receptor family; brain areas as CCF acronyms; cell type level selectable |
+| Config-driven | Nested `gene_panel` (category → family → genes); brain areas as CCF acronyms; cell type level selectable |
 | Partial reads | `anndata.read_h5ad(..., backed='r')` + slice by cells/genes; close file handles in `finally` |
 | Graceful degradation | Missing genes warn and skip; empty heatmaps warn and skip |
 | Separation of concerns | Notebooks orchestrate; `src/` holds reusable logic |
-| External cache | `AbcProjectCache` downloads to `data.cache_dir` (default `~/abc_atlas_cache`) |
+| Reproducibility | Per-run `run_manifest.json` (git commit + full config snapshot) |
+| Cross-dataset honesty | Measured vs imputed provenance tracked; Spearman-first cross-ref; independent-dataset concordance in synthesis |
 
 ---
 
@@ -132,37 +142,47 @@ Validated by `src/config.py`:
 
 | Key | Purpose |
 |-----|---------|
-| `receptors` | Dict of family name → list of gene symbols |
+| `gene_panel` | Nested `category → family → [gene symbols]` (canonical). Legacy top-level `receptors` / `excitability` still accepted. |
 | `brain_areas` | List of CCF v3 acronyms |
-| `cell_type_level` | One of `class`, `subclass`, `supertype`, `cluster` |
-| `output` | Figure settings, caching flags |
-| `data` | Cache path, expression unit, MERFISH options |
+| `cell_type_level` | One of `class`, `subclass`, `supertype`, `cluster` (default: `supertype`) |
+| `output` | Figure settings, output root, caching flags |
+| `data` | Cache path, expression unit, MERFISH/Vizgen/Zhuang options |
+
+### Optional top-level keys
+
+| Key | Purpose |
+|-----|---------|
+| `cell_type_name_filter` | Substrings; keep cell types whose name contains any match (e.g. `["L2/3", "L5"]`) |
+| `synthesis` | Optional overrides for detection thresholds (`min_frac`, `min_mean`) in M5 |
 
 ### Derived keys (set at load time)
 
 | Key | Type | Description |
 |-----|------|-------------|
+| `_gene_panel` | `dict[str, list[str]]` | Flattened `family → [genes]` |
+| `_gene_panel_key` | `str` | Which top-level key held the panel (`gene_panel`, `receptors`, or `excitability`) |
 | `_genes_flat` | `dict[str, str]` | Gene symbol → family name |
 | `_all_genes` | `list[str]` | Ordered gene list |
-| `_families` | `list[str]` | Receptor family names |
-| `_config_path` | `str` | Absolute path to YAML (for relative path resolution) |
+| `_families` | `list[str]` | Family names (unique across categories) |
+| `_categories` | `list[str]` | Top-level categories when nested (e.g. `receptors`, `excitability`) |
+| `_gene_category` | `dict[str, str]` | Gene symbol → category |
+| `_family_category` | `dict[str, str]` | Family → category |
+| `_config_path` | `str` | Absolute path to YAML |
 
-### Current gene panel (full config)
+`load_config` also accepts a **flat** panel (`family → [genes]`) without categories.
 
-The committed config defines **~50 genes** across **8 families**:
+### Current gene panel (committed config)
 
-| Family | Genes |
-|--------|-------|
-| dopamine | Drd1, Drd2, Drd3, Drd4, Drd5 |
-| serotonin | Htr1a, Htr1b, Htr2a, Htr2c, Htr3a, Htr4, Htr6, Htr7 |
-| glutamate | Grin1, Grin2a, Grin2b, Grm1, Grm5 |
-| gaba | Gabra1, Gabra2, Gabrb2, Gabrg2 |
-| opioid | Oprm1, Oprd1, Oprk1 |
-| cannabinoid | Cnr1, Cnr2 |
-| acetylcholine | Chrm1–5, Chrna2–4, Chrna7, Chrnb2, Chrnb4 |
-| adrenergic | Adra1a/b/d, Adra2a/b/c, Adrb1–3 |
+The unified config defines **243 genes** across **45 families** in **2 categories**:
 
-Note: notebook execution outputs in the repo reflect an **earlier narrowed config** (e.g. only `Htr2a` in `VISp`). Re-run notebooks after editing the YAML to pick up changes.
+| Category | Families | Active genes |
+|----------|----------|--------------|
+| `receptors` | 32 | 146 |
+| `excitability` | 13 | 97 |
+
+Many additional genes are listed but commented out in the YAML (e.g. ionotropic glutamate/GABA receptor subunits). Uncomment to activate. To analyse one category only, comment out the other under `gene_panel`.
+
+Per-family heatmaps use the `family` key; synthesis carries the `category` column for receptor vs excitability grouping.
 
 ### Brain areas
 
@@ -177,42 +197,56 @@ Current setting uses visual cortex sub-regions: `VISp`, `VISpm`, `VISam`, `RSPag
 
 ```yaml
 output:
-  figures_dir: figures/           # Fallback; notebooks override via OUTPUT_DIR
+  output_dir: /Users/rancze/Documents/!Projects/Ach_NE_Marius_Felix/exploration
   dpi: 150
   heatmap_cmap: viridis
   spatial_cmap: magma
   figsize_heatmap: [14, 8]
   figsize_spatial: [10, 10]
-  save_processed_data: true        # Writes data/aggregated_scrna.parquet
+  save_processed_data: true          # Writes aggregated_*.parquet per run
 ```
+
+Notebooks set `EXPLORATION_ROOT = resolve_output_dir(cfg=config)` after loading the YAML, so `output.output_dir` is the single source of truth. Fallback (if YAML omits it): `DEFAULT_OUTPUT_DIR` in `src/config.py` (currently the `Ach_NE_Marius_Felix/exploration` path).
 
 ### Data settings
 
 ```yaml
 data:
-  cache_dir: ~/abc_atlas_cache
-  use_imputed_merfish: true        # Fall back to ~8k-gene imputed matrix
-  expression_unit: log2            # log2 | raw  → selects *-log2.h5ad vs *-raw.h5ad
+  cache_dir: /Users/rancze/Documents/Data/expresso_data/abc_atlas_cache
+  use_imputed_merfish: true          # Fall back to ~8k-gene imputed matrix
+  expression_unit: log2                # log2 | raw  → *-log2.h5ad vs *-raw.h5ad
   merfish_dataset: MERFISH-C57BL6J-638850
-  vizgen_data_dir: null            # For Milestone 3
+  vizgen_data_dir: /Users/rancze/Documents/Data/expresso_data/vizgen_cache
+  vizgen_samples: null                 # null = all S*R* pairs found in vizgen_data_dir
+  vizgen_label_transfer_max_cells: 50000
+  vizgen_label_transfer_k: 15
+  vizgen_label_transfer_min_confidence: 0.0   # e.g. 0.6 drops low-confidence kNN labels
+  zhuang_datasets:                     # Zhuang-ABCA-1 … -4
+    - Zhuang-ABCA-1
+    - Zhuang-ABCA-2
+    - Zhuang-ABCA-3
+    - Zhuang-ABCA-4
+  allen_merfish_parquet: null          # optional override; auto-discovered if null
 ```
 
 ---
 
 ## Data sources
 
-All primary data comes from the ABC Atlas public S3 bucket (`arn:aws:s3:::allen-brain-cell-atlas`), accessed via [`abc_atlas_access`](https://github.com/alleninstitute/abc_atlas_access) (`AbcProjectCache`).
+All primary data comes from the ABC Atlas public S3 bucket (`arn:aws:s3:::allen-brain-cell-atlas`), accessed via [`abc_atlas_access`](https://github.com/alleninstitute/abc_atlas_access) (`AbcProjectCache`). Vizgen CSVs are downloaded separately and pointed to by `data.vizgen_data_dir`.
 
 ### Datasets used in code
 
-| Directory constant | Dataset | Used for |
+| Directory / source | Dataset | Used for |
 |--------------------|---------|----------|
 | `WMB-10X` | Metadata hub | Gene table, cell metadata, ROI metadata |
-| `WMB-10Xv3` | scRNA-seq expression | Milestone 1 (split by anatomical package) |
+| `WMB-10Xv3` | scRNA-seq expression | M1 (split by anatomical package) |
 | `WMB-taxonomy` | Cell type annotations | Join cluster → class/subclass/supertype/cluster |
-| `MERFISH-C57BL6J-638850` | MERFISH (~500 genes) | Milestone 2 measured expression |
-| `MERFISH-C57BL6J-638850-imputed` | Imputed MERFISH (~8k genes) | Milestone 2 fallback |
-| `MERFISH-C57BL6J-638850-CCF` | CCF coordinates | Spatial plotting (`x_ccf`, `y_ccf`, `z_ccf`) |
+| `MERFISH-C57BL6J-638850` | MERFISH (~500 genes) | M2 measured expression |
+| `MERFISH-C57BL6J-638850-imputed` | Imputed MERFISH (~8k genes) | M2/M3/M4 fallback |
+| `MERFISH-C57BL6J-638850-CCF` | CCF coordinates | Spatial helpers in `plotting.py` |
+| `Zhuang-ABCA-1` … `-4` | Zhuang MERFISH (~1122 genes) | M4 cross-reference |
+| Vizgen CSV pairs | Mouse Brain Receptor Map (~483 genes) | M3 cross-reference |
 
 ### Scale (approximate)
 
@@ -230,6 +264,8 @@ Manifest in use (from notebook runs): `releases/20260415/manifest.json`.
 
 Default: **log2(CPM+1)**. Config key `data.expression_unit` selects file suffix (`log2` or `raw`). Plot colorbars label this as `log2(CPM+1)`.
 
+**Vizgen normalisation:** CPM is computed against the **full real-gene panel** (all non-`Blank*` columns), not the requested gene subset. This is critical for cross-dataset comparability (see [REVIEW.md](REVIEW.md) §2.1).
+
 ---
 
 ## Module reference
@@ -238,11 +274,21 @@ Default: **log2(CPM+1)**. Config key `data.expression_unit` selects file suffix 
 
 | Function | Description |
 |----------|-------------|
-| `load_config(path)` | Load YAML, validate required keys and `cell_type_level`, derive gene lists |
-| `get_figures_dir(cfg, base_dir, output_dir)` | Resolve/create figures directory; `output_dir` overrides config |
-| `get_parquet_path(cfg, base_dir)` | Returns `{base_dir}/data/aggregated_scrna.parquet` |
+| `load_config(path)` | Load YAML, validate keys, parse flat or nested `gene_panel`, derive gene lists and category maps |
+| `restrict_config_to_genes(config, gene_symbols)` | Prune derived gene lists after a dataset load; returns removed symbols |
+| `start_run(project_root, cfg, dataset=..., exploration_root=...)` | Create timestamped run dir + `run_manifest.json` (git + config snapshot) |
+| `resolve_output_dir(output_dir, cfg, base_dir)` | Resolve notebook output root (explicit → YAML → `DEFAULT_OUTPUT_DIR`) |
+| `get_figures_dir(cfg, base_dir, output_dir)` | Resolve/create figures directory under output root |
+| `get_parquet_path(cfg, output_dir, base_dir)` | Path for `aggregated_scrna.parquet` under output root |
 | `get_cache_dir(cfg)` | Expands `data.cache_dir` |
 | `get_expression_suffix(cfg)` | Returns `'log2'` or `'raw'` |
+| `get_vizgen_data_dir(cfg)` | Validates and returns Vizgen CSV directory |
+| `get_vizgen_samples(cfg)` | Resolves `vizgen_samples` list (explicit or auto-discovered) |
+| `get_zhuang_datasets(cfg)` | Returns configured Zhuang replicate IDs |
+| `find_prior_run_parquet(cfg, parquet_filename, dataset_slug, exploration_root)` | Find newest matching aggregate parquet; **warns on `brain_areas` mismatch** vs current config |
+| `collect_git_info(project_root)` | Git metadata for run manifests |
+
+Run folder naming: `{timestamp}_{cell_type_level}_{dataset_slug}/`. The manifest stores the config under the legacy key `receptor_query_config` (kept for backward compatibility with existing runs).
 
 ### `src/utils.py`
 
@@ -251,37 +297,91 @@ Default: **log2(CPM+1)**. Config key `data.expression_unit` selects file suffix 
 | `resolve_gene_ids(gene_df, symbols)` | Map gene symbols → Ensembl IDs; warn on duplicates |
 | `warn_missing_genes(found, requested)` | UserWarning for genes not in dataset |
 | `build_brain_area_mapping(cache, brain_areas)` | ROI/package → config brain area; returns mapping + assign function |
-| `top_variable_cell_types(matrix, n=50)` | Top-N cell types by row variance (for combined heatmap) |
-
-**Internal mappings:**
-
-- `_CORTICAL_ROIS` — dissection acronyms grouped as `CTX`
-- `_CCF_TO_DISSECTION_ROI` — CCF sub-regions (e.g. `VISp` → `VIS`, `CP` → `STRd`)
-- `_PACKAGE_TO_BRAIN_AREA` — `feature_matrix_label` suffix → brain area (e.g. `Isocortex-1` → `CTX`)
+| `scrna_heatmap_columns(config)` | Column labels for scRNA heatmaps (handles pooled VIS columns) |
+| `filter_cell_types_by_name(cell_types, config)` | Apply `cell_type_name_filter` |
+| `top_variable_cell_types(matrix, n=50)` | Top-N cell types by row variance (library helper) |
+| `assign_merfish_brain_area(...)` | CCF parcellation → config brain area for MERFISH cells |
 
 ### `src/data_loaders.py`
+
+**Allen scRNA (M1)**
 
 | Function | Description |
 |----------|-------------|
 | `get_abc_cache(config)` | `AbcProjectCache.from_cache_dir(...)` |
 | `load_scrna_cell_metadata(cache, config)` | WMB-10Xv3 cells + taxonomy + brain_area; filtered to config regions |
 | `load_expression_subset(cache, genes, cell_meta, config)` | Partial h5ad load across relevant packages |
-| `aggregate_scrna_expression(adata, cell_meta, config)` | Long DataFrame: cell_type, brain_area, gene, mean_expression, family |
-| `family_gene_region_matrix(agg_long, family, brain_areas)` | Wide matrix for family heatmap (cell types × brain areas) |
-| `combined_heatmap_matrix(agg_long, top_cell_types, brain_areas)` | Wide matrix for combined heatmap (cell types × genes) |
-| `load_merfish_cell_metadata(cache, config)` | MERFISH metadata + CCF coords |
+| `aggregate_scrna_expression(adata, cell_meta, config)` | Long table: cell_type, brain_area, gene, mean_expression, **frac_expressing**, **n_cells**, family |
+| `family_gene_region_matrix(agg_long, family, brain_areas)` | Wide matrix for family heatmap |
+| `combined_heatmap_matrix(agg_long, config)` | Wide matrix for combined heatmap |
+
+**Allen MERFISH (M2, M3 reference)**
+
+| Function | Description |
+|----------|-------------|
+| `load_merfish_cell_metadata(cache, config)` | MERFISH metadata + CCF coords + brain_area |
 | `check_gene_availability(cache, gene, config)` | `'present'` \| `'imputed'` \| `'missing'` |
-| `load_single_gene_merfish(cache, gene, config)` | One gene as Series; source `'measured'` or `'imputed'` |
+| `check_merfish_genes(cache, genes, config)` | Batch availability check |
+| `load_merfish_expression_subset(cache, genes, cell_meta, config)` | Partial multi-gene MERFISH load |
+| `aggregate_merfish_expression(adata, cell_meta, config)` | Same schema as scRNA aggregation |
+| `family_gene_region_matrix_merfish(agg_long, family, brain_areas)` | MERFISH family matrix |
+| `load_allen_merfish_aggregate(config, exploration_root)` | Load cached Allen MERFISH parquet for cross-ref |
+| `merfish_gene_source_map(cache, genes, config)` | Gene → `measured` / `imputed` / `missing` |
+| `load_single_gene_merfish(cache, gene, config)` | One gene as Series (used by spatial helpers) |
+
+**Zhuang (M4)**
+
+| Function | Description |
+|----------|-------------|
+| `load_zhuang_cell_metadata(cache, config, dataset_id)` | Zhuang cells + CCF parcellation |
+| `check_zhuang_genes(cache, genes, dataset_id)` | Panel availability |
+| `load_zhuang_expression_subset(...)` | Partial Zhuang load |
+| `aggregate_zhuang_replicates_mean(frames, config)` | Mean across replicates; averages `frac_expressing`, sums `n_cells` |
+| `load_zhuang_aggregated(config, exploration_root)` | Full M4 aggregate pipeline |
+
+**Vizgen (M3)**
+
+| Function | Description |
+|----------|-------------|
+| `load_vizgen_sample(config, sample_tag, genes)` | Load one Vizgen CSV; **full-panel CPM** normalisation |
+| `check_vizgen_genes(config, genes)` | Panel availability |
+| `build_allen_merfish_label_reference(...)` | Subsampled Allen MERFISH reference for kNN |
+| `transfer_allen_merfish_labels(adata, x_ref, y_type, y_area, gene_order, config)` | **Z-scored** kNN label transfer + confidence columns |
+| `load_vizgen_aggregated(config, exploration_root)` | Full M3 aggregate pipeline (optional confidence filter) |
+
+**Cross-reference helpers**
+
+| Function | Description |
+|----------|-------------|
+| `merge_crossref_aggregates(allen_df, other_df, config)` | Inner-join Allen vs other dataset on cell_type × brain_area × gene |
 
 ### `src/plotting.py`
 
 | Function | Description |
 |----------|-------------|
 | `plot_heatmap(agg_df, title, config, save_path, ...)` | Seaborn clustermap (or plain heatmap if <2×2) |
-| `plot_family_heatmap(family, gene_matrix, config, ...)` | Saves `heatmap_{family}.png` |
-| `plot_combined_heatmap(all_genes_matrix, config, ...)` | Saves `heatmap_combined.png` |
-| `plot_spatial(coords_df, expression, gene, projection, config, ...)` | Single-gene CCF or section scatter |
-| `plot_family_spatial_panel(family_results, family, coords_df, config, ...)` | Grid: genes × projections |
+| `plot_family_heatmap(family, gene_matrix, config, ...)` | Per-family heatmap |
+| `plot_combined_heatmap(all_genes_matrix, config, ...)` | Combined all-genes heatmap |
+| `plot_crossref_scatter(merged, config, title, save_path, ...)` | **Spearman ρ-first** Allen vs other scatter |
+| `plot_crossref_family_scatters(...)` | Per-family cross-ref scatters |
+| `plot_crossref_side_by_side_heatmaps(...)` | Aligned Allen vs other heatmaps |
+| `plot_spatial(coords_df, expression, gene, projection, config, ...)` | Single-gene CCF scatter (library extra; not wired into NB02) |
+| `plot_family_spatial_panel(...)` | Grid: genes × projections (library extra) |
+| `format_gene_label(gene, source)` | Appends `*` for imputed genes |
+
+### `src/synthesis.py`
+
+| Function | Description |
+|----------|-------------|
+| `discover_dataset_parquets(config, exploration_root)` | Locate newest `aggregated_*.parquet` per dataset |
+| `gather_dataset_aggregates(config, exploration_root)` | Read all available aggregates; warn on missing |
+| `build_evidence_table(aggregates, config, allen_gene_sources=...)` | Core evidence table: (cell_type, brain_area, gene) with per-dataset metrics, detection flags, confidence tier |
+| `target_evidence(evidence, cell_type, region=None)` | Filter to one cell type (± region) |
+| `summarize_target(evidence, cell_type, region=None)` | Tier/family/category summary for a target |
+| `statement_scaffold(summary)` | Human-readable claim split by category |
+| `plot_evidence_dotplot(evidence, target, config, save_path)` | Dot plot: mean × fraction across datasets |
+
+`DATASET_SPECS` registry defines per-dataset parquet names, slug matching, region resolution, and imputed support. Allen MERFISH imputed values are **supporting** evidence only (not independent of Allen scRNA).
 
 ---
 
@@ -292,46 +392,34 @@ Default: **log2(CPM+1)**. Config key `data.expression_unit` selects file suffix 
 ### Pipeline steps
 
 1. **Load config** → derive gene list, brain areas, cell type level
-2. **Init cache** → `get_abc_cache(config)`
-3. **Load cell metadata** → `load_scrna_cell_metadata`
+2. **`start_run`** → timestamped output dir + manifest
+3. **Init cache** → `get_abc_cache(config)`
+4. **Load cell metadata** → `load_scrna_cell_metadata`
    - Filter to `dataset_label == "WMB-10Xv3"`
    - Join WMB taxonomy on `cluster_alias`
    - Assign `brain_area` via ROI/package mapping
    - Filter to config `brain_areas`
-4. **Load expression** → `load_expression_subset`
-   - Resolve symbols → Ensembl IDs via WMB-10X gene table
-   - Iterate unique `feature_matrix_label` values in filtered cells
-   - For each package: backed read `{pkg}/{log2|raw}`, slice cells × genes, `to_memory()`
-   - Concatenate packages; attach `gene_symbol` to `var`
-5. **Aggregate** → `aggregate_scrna_expression`
-   - Mean expression per `(cell_type_level, brain_area)` for each gene
-6. **Plot**
-   - Per family: `family_gene_region_matrix` → `plot_family_heatmap`
-   - Combined: top 50 variable cell types → `plot_combined_heatmap`
-7. **Cache** (optional) → `agg_long.to_parquet(data/aggregated_scrna.parquet)`
+5. **Load expression** → `load_expression_subset` (backed partial reads per package)
+6. **Aggregate** → `aggregate_scrna_expression`
+   - Mean expression, fraction expressing, and cell count per `(cell_type_level, brain_area, gene)`
+7. **Plot** per-family and combined heatmaps
+8. **Cache** → `aggregated_scrna.parquet` in the run dir
 
 ### Aggregated output schema
 
 | Column | Description |
 |--------|-------------|
 | `cell_type` | Value at configured taxonomy level (e.g. supertype name) |
-| `brain_area` | Config brain area acronym |
+| `brain_area` | Config brain area acronym (may be pooled — see §Brain area mapping) |
 | `gene` | Gene symbol |
-| `mean_expression` | Mean log2(CPM+1) across cells in group |
-| `family` | Receptor family from config |
-
-Example run (Htr2a, VISp): **30,882 cells**, **102 aggregated rows** (102 supertypes × 1 gene × 1 region).
+| `mean_expression` | Mean log2(CPM+1) across cells in group (zeros included) |
+| `frac_expressing` | Fraction of cells with expression > 0 |
+| `n_cells` | Number of cells in the group |
+| `family` | Gene family from config |
 
 ### Partial loading pattern (critical)
 
-The full WMB-10Xv3 matrix is far too large for RAM. The code:
-
-- Filters cells **first** (metadata only)
-- Loads only **packages** present in `cell_meta.feature_matrix_label`
-- Uses **backed mode** and closes files after each package
-- Converts only the sliced subset to memory
-
-This mirrors the partial-read pattern in the Allen Institute `abc_atlas_access` tutorials.
+The full WMB-10Xv3 matrix is far too large for RAM. The code filters cells first (metadata only), loads only packages present in `cell_meta.feature_matrix_label`, uses backed mode, and closes files after each package.
 
 ---
 
@@ -351,29 +439,26 @@ TH, HY, MB, ...              →    Direct acronym match or package suffix
 
 **Implications:**
 
-- Querying `VISp` alone still pulls **all VIS dissection cells** (~31k), then labels them as `VISp`. You cannot resolve primary vs secondary visual cortex at scRNA resolution without MERFISH/spatial data.
+- Querying `VISp` alone still pulls **all VIS dissection cells**, then labels them as `VISp`. You cannot resolve primary vs secondary visual cortex at scRNA resolution.
 - Warnings are intentional — read them when interpreting heatmaps.
-- MERFISH (Milestone 2) **does** have CCF coordinates and is the right modality for sub-regional spatial patterns.
+- MERFISH (M2), Vizgen (M3), and Zhuang (M4) **do** have CCF parcellation and support fine-region claims.
+- Synthesis flags Allen scRNA as `region_resolved=False` and broadcasts its values across regions.
 
 ---
 
-## Milestone 2 — MERFISH spatial maps
+## Milestone 2 — MERFISH heatmaps
 
-**Notebook:** [`notebooks/02_merfish_spatial.ipynb`](notebooks/02_merfish_spatial.ipynb)
+**Notebook:** [`notebooks/02_merfish_spatial.ipynb`](notebooks/02_merfish_spatial.ipynb) (filename reflects an earlier spatial-scatter design; the notebook now produces **heatmaps** like M1 but with native CCF sub-region resolution).
 
 ### Pipeline steps
 
-1. Load config and cache
-2. **Load MERFISH metadata** → `load_merfish_cell_metadata`
-   - `cell_metadata_with_cluster_annotation` from MERFISH dataset
-   - Join `ccf_coordinates` from `MERFISH-C57BL6J-638850-CCF`
-   - Rename section coords to `x_section`, `y_section`, `z_section`
-   - CCF coords: `x_ccf`, `y_ccf`, `z_ccf`
-3. For each gene in config:
-   - `check_gene_availability` → panel / imputed / missing
-   - `load_single_gene_merfish` → expression Series (~3.74M values)
-   - Plot coronal, sagittal, axial via `plot_spatial(coord_prefix='ccf')`
-4. **Family panels** → `plot_family_spatial_panel` (genes × 3 projections)
+1. Load config, `start_run`, init cache
+2. **Load MERFISH metadata** → `load_merfish_cell_metadata` (CCF parcellation → `brain_area`)
+3. **Check genes** → `check_merfish_genes` (panel / imputed / missing)
+4. **Load expression** → `load_merfish_expression_subset` (batched partial read)
+5. **Aggregate** → `aggregate_merfish_expression` (same schema as M1, including `frac_expressing` / `n_cells`)
+6. **Plot** per-family and combined heatmaps
+7. **Cache** → `aggregated_merfish.parquet`
 
 ### Gene availability logic
 
@@ -383,19 +468,53 @@ Else if use_imputed_merfish and in imputed var?  →  load from -imputed  (imput
 Else  →  skip with warning
 ```
 
-Imputed gene symbols are cached module-wide in `_imputed_panel_cache` after first backed read of imputed h5ad `var`.
+Imputed genes are marked with `*` in heatmap labels. Most excitability ion-channel genes require the imputed matrix or are absent from MERFISH entirely.
 
-**Note:** `load_single_gene_merfish` reads the **full MERFISH h5ad** per gene (backed, one column). For many genes this is I/O-heavy but RAM-light. A future optimization could batch genes or memory-map more aggressively.
+`plot_spatial` / `plot_family_spatial_panel` remain in `plotting.py` as optional library helpers (single-gene CCF scatter maps) but are not called by the current notebook.
 
-### Projections
+---
 
-| Projection | CCF axes | Section axes (unused by default) |
-|------------|----------|----------------------------------|
-| coronal | x_ccf, y_ccf | x_section, y_section |
-| sagittal | z_ccf, y_ccf | z_section, y_section |
-| axial | x_ccf, z_ccf | x_section, z_section |
+## Milestones 3–4 — Cross-reference
 
-Plots use 99th percentile of positive values for `vmax`, `vmin=0`, rasterized scatter, equal aspect, inverted y-axis.
+### Milestone 3 — Vizgen (`03_vizgen_crossref.ipynb`)
+
+- **Data:** Vizgen MERFISH Mouse Brain Receptor Map (~483 genes); flat CSV pairs under `data.vizgen_data_dir`
+- **Normalisation:** full real-gene panel CPM (exclude `Blank*` probes)
+- **Label transfer:** z-scored kNN on shared genes transfers Allen `supertype` and CCF `brain_area` to Vizgen cells; confidence recorded per cell; optional filter via `vizgen_label_transfer_min_confidence`
+- **Outputs:** Vizgen heatmaps, Allen↔Vizgen scatter plots (Spearman ρ-first), side-by-side heatmaps, `aggregated_vizgen.parquet`
+- **Coverage note:** Vizgen is a receptor panel — almost no excitability genes
+
+### Milestone 4 — Zhuang (`04_zhuang_crossref.ipynb`)
+
+- **Data:** `Zhuang-ABCA-1` … `Zhuang-ABCA-4` via `AbcProjectCache`; ~1122-gene panel
+- **Aggregation:** replicate mean with averaged `frac_expressing` and summed `n_cells`
+- **Outputs:** Zhuang heatmaps, Allen↔Zhuang scatter plots, `aggregated_zhuang.parquet`
+- **Reuse:** discovers cached `aggregated_merfish.parquet` via `find_prior_run_parquet` (warns on `brain_areas` mismatch)
+
+Cross-ref plots lead with **Spearman ρ** (rank concordance); Pearson r is secondary. Measured-only ρ is reported separately from imputed Allen genes.
+
+---
+
+## Milestone 5 — Synthesis
+
+**Notebook:** [`notebooks/05_synthesis.ipynb`](notebooks/05_synthesis.ipynb)  
+**Module:** [`src/synthesis.py`](src/synthesis.py)
+
+### Pipeline steps
+
+1. Load unified `query_config.yaml` (receptors + excitability)
+2. **`gather_dataset_aggregates`** — discover and read `aggregated_scrna/merfish/vizgen/zhuang.parquet` from prior runs (warns if `brain_areas` differ)
+3. **`merfish_gene_source_map`** — Allen MERFISH measured vs imputed provenance
+4. **`build_evidence_table`** — one row per (cell_type, brain_area, gene) with:
+   - per-dataset `mean_expression`, `frac_expressing`, `n_cells`, `source` (measured/imputed)
+   - detection flag (`frac ≥ min_frac` AND `mean ≥ min_mean`; defaults 0.25 / 1.0, overridable via optional `synthesis:` config block)
+   - `n_independent_measured_detections` and `confidence_tier` (high / medium / low / none)
+   - `category` column (receptors vs excitability)
+5. **Target analysis** — `target_evidence` / `summarize_target` / `statement_scaffold` for a chosen cell type (± region)
+6. **Plot** → `plot_evidence_dotplot`
+7. **Write** → `evidence_table.parquet` + `.csv`
+
+Level-agnostic: works at whatever `cell_type_level` is configured. Re-run notebooks 01–04 after code changes so parquets carry `frac_expressing` and `n_cells`.
 
 ---
 
@@ -406,23 +525,19 @@ Plots use 99th percentile of positive values for `vmax`, `vmin=0`, rasterized sc
 - Uses `seaborn.clustermap` when matrix is ≥2×2 (row and column clustering)
 - Falls back to plain `sns.heatmap` for tiny matrices
 - Colormap from `output.heatmap_cmap` (default `viridis`)
+- Titles are panel-neutral ("Family — mean log2(CPM+1)", not hardcoded "receptors")
+- Imputed genes tagged with `*` via `format_gene_label`
 
-### Spatial
+### Cross-reference
 
-- Point size 0.3 (single) / 0.2 (panel), alpha 0.6 / 0.5
-- Imputed genes tagged in title: `[imputed]` or `[imp]` in panels
-- Family panel figure size scales with gene count and projection count
+- `plot_crossref_scatter`: Spearman ρ in title (overall + measured-only); Pearson r secondary
+- Hollow markers / `*` for imputed Allen genes
+- Side-by-side heatmaps align cell types and genes between datasets
 
-### Figure output paths
+### Spatial (library extras)
 
-Notebooks set:
-
-```python
-OUTPUT_DIR = Path("/Users/rancze/Documents/!Projects/Ach_NE_Marius_Felix/exploration")
-figures_dir = get_figures_dir(config, output_dir=OUTPUT_DIR)
-```
-
-Some notebook cells print paths under `Expresso/figures/` — that happens when `get_figures_dir` resolves differently or outputs were from an earlier run. **Edit `OUTPUT_DIR` in each notebook** to control where PNGs land.
+- `plot_spatial` / `plot_family_spatial_panel`: CCF scatter maps; not wired into current notebooks
+- 99th percentile of positive values for `vmax`; imputed genes tagged in title
 
 ---
 
@@ -430,33 +545,43 @@ Some notebook cells print paths under `Expresso/figures/` — that happens when 
 
 | Notebook | Status | Primary outputs |
 |----------|--------|-----------------|
-| `01_scrna_heatmaps.ipynb` | ✅ Complete | `heatmap_{family}.png`, `heatmap_combined.png`, `aggregated_scrna.parquet` |
-| `02_merfish_spatial.ipynb` | ✅ Complete | family + combined heatmaps, `aggregated_merfish.parquet` (spatial-scatter helpers exist in `plotting.py` but are not wired into this notebook) |
+| `01_scrna_heatmaps.ipynb` | ✅ Implemented | `heatmap_{family}.png`, `heatmap_combined.png`, `aggregated_scrna.parquet` |
+| `02_merfish_spatial.ipynb` | ✅ Implemented | `heatmap_{family}.png`, `heatmap_combined.png`, `aggregated_merfish.parquet` |
 | `03_vizgen_crossref.ipynb` | ✅ Implemented | Vizgen heatmaps + Allen cross-ref scatters/heatmaps, `aggregated_vizgen.parquet` |
 | `04_zhuang_crossref.ipynb` | ✅ Implemented | Zhuang heatmaps + Allen cross-ref scatters, `aggregated_zhuang.parquet` |
 | `05_synthesis.ipynb` | ✅ Implemented | `evidence_table.parquet`/`.csv`, focused dot plot, statement scaffold |
 
 ### Common notebook boilerplate
 
-All notebooks resolve `PROJECT_ROOT` (cwd or parent if run from `notebooks/`), insert into `sys.path`, and import from `src.*`. Kernelspec: conda env `expresso`.
+All notebooks resolve `PROJECT_ROOT` (cwd or parent if run from `notebooks/`), insert into `sys.path`, load `query_config.yaml`, set `EXPLORATION_ROOT = resolve_output_dir(cfg=config)`, call `start_run(..., exploration_root=EXPLORATION_ROOT)`, and import from `src.*`. Kernelspec: conda env `expresso`.
 
 ### Dev / smoke cell (M1 only)
 
-The last cells in `01_scrna_heatmaps.ipynb` override config to **Drd1/Drd2 × STR/TH** for a smaller download footprint — useful for validation without pulling full isocortex packages.
+The last cells in `01_scrna_heatmaps.ipynb` override config to **Drd1/Drd2 × STR/TH** for a smaller download footprint.
 
 ---
 
 ## Outputs and caching
 
+| Location | Config key | Contents |
+|----------|------------|----------|
+| `…/Ach_NE_Marius_Felix/exploration` | `output.output_dir` | Timestamped run dirs, parquets, figures |
+| `…/Data/expresso_data/abc_atlas_cache` | `data.cache_dir` | ABC Atlas downloads (scRNA, MERFISH, Zhuang) |
+| `…/Data/expresso_data/vizgen_cache` | `data.vizgen_data_dir` | Vizgen MERFISH CSV pairs |
+
 | Artifact | Location | When |
 |----------|----------|------|
-| ABC Atlas files | `~/abc_atlas_cache` (configurable) | First access per file |
-| Aggregated scRNA table | `data/aggregated_scrna.parquet` | M1, if `save_processed_data: true` |
-| Heatmaps | `OUTPUT_DIR` or `figures/` | M1 |
-| Spatial PNGs | `OUTPUT_DIR` or `figures/` | M2 |
+| ABC Atlas files | `data.cache_dir` | First access per file |
+| Run directory | `{exploration_root}/{timestamp}_{level}_{dataset}/` | Each notebook run via `start_run` |
+| Run manifest | `{run_dir}/run_manifest.json` | Git commit + full config snapshot |
+| Aggregated tables | `{run_dir}/aggregated_{scrna,merfish,vizgen,zhuang}.parquet` | M1–M4 |
+| Evidence table | `{run_dir}/evidence_table.parquet` + `.csv` | M5 |
+| Heatmaps / scatters | `{run_dir}/` or figures subdir | M1–M5 |
 | Verify test heatmap | `figures/verify_test_heatmap.png` | `verify_setup.py` |
 
-Parquet enables re-plotting or downstream analysis without re-downloading expression matrices.
+`find_prior_run_parquet` discovers the **newest** matching aggregate under the exploration root (matches `cell_type_level` + `dataset_slug`). It issues a **`REGION MISMATCH` warning** when the discovered run's `brain_areas` differ from the current config — cross-ref and synthesis only join on overlapping regions.
+
+Parquet enables re-plotting and synthesis without re-downloading expression matrices. Saved notebook outputs in the repo may reflect an older config or code version; re-execute after YAML or code edits.
 
 ---
 
@@ -467,7 +592,7 @@ Parquet enables re-plotting or downstream analysis without re-downloading expres
 | Python | **3.11 or 3.12** only (`requires-python = ">=3.11,<3.13"`) |
 | Recommended setup | `conda env create -f environment.yml && conda activate expresso` |
 | Pip alternative | `pip install -r requirements.txt` |
-| Vizgen (M3) | Same as M1/M2 (`requirements.txt`); Vizgen CSV I/O uses pandas/anndata |
+| Vizgen (M3) | Same as M1/M2; Vizgen CSV I/O uses pandas/anndata |
 
 ### Core packages
 
@@ -487,7 +612,7 @@ python scripts/verify_setup.py             # Also loads Drd2 from WMB-10Xv3-STR
 
 Steps:
 
-1. Load config; assert genes present
+1. Load `query_config.yaml`; assert genes present
 2. Init `AbcProjectCache`
 3. Check Drd2 in gene metadata
 4. (Full) Load STR cells + Drd2 expression via backed read
@@ -497,38 +622,16 @@ Exits with error on unsupported Python (≥3.13 or <3.11).
 
 ---
 
-## Cross-reference & synthesis milestones (implemented)
-
-### Milestone 3 — Vizgen (`03_vizgen_crossref.ipynb`)
-
-- **Data:** Vizgen MERFISH Mouse Brain Receptor Map (~483 genes); flat CSV pairs
-- **Config:** `data.vizgen_data_dir`, `vizgen_samples`, `vizgen_label_transfer_*`
-- **Goal:** Reproduce M1/M2 analyses; side-by-side comparison with Allen for overlapping genes
-- **Note:** expression is normalised to full-panel library size (CPM); Allen labels are transferred to Vizgen cells via z-scored kNN with a recorded confidence
-
-### Milestone 4 — Zhuang (`04_zhuang_crossref.ipynb`)
-
-- **Data:** `Zhuang-ABCA-1` … `Zhuang-ABCA-4` via same `AbcProjectCache` API
-- **Goal:** Validate Allen MERFISH patterns; Spearman-led correlation Allen vs Zhuang per region × cell type
-
-### Milestone 5 — Synthesis (`05_synthesis.ipynb`)
-
-- **Module:** `src/synthesis.py`
-- **Goal:** Combine all per-dataset aggregates into one evidence table with detection
-  rates, independent-dataset concordance, and per-row confidence tiers; emit a
-  focused dot plot and statement scaffold for a target (cell_type, region)
-
----
-
 ## Known limitations and gotchas
 
 1. **scRNA sub-regions are approximate** — CCF acronyms in config map to coarser dissection ROIs; warnings indicate when this happens.
 2. **Large first-run downloads** — Plan disk space (~20 GB+ for cortex scRNA; ~50 GB if imputed MERFISH needed).
-3. **MERFISH panel coverage** — Only ~500 genes measured; many receptors require imputed matrix or scRNA-only analysis.
-4. **Per-gene MERFISH I/O** — Loading N genes opens the h5ad N times; slow for full 50-gene panel.
-5. **Config vs notebook outputs** — Saved notebook outputs may reflect an older narrowed config; re-execute after YAML edits.
-6. **Vizgen label transfer is approximate** — Vizgen cells get Allen `supertype` and CCF `brain_area` via kNN on overlapping genes, not native Vizgen annotations.
-7. **figures/ in repo** — PNGs gitignored; `data/aggregated_scrna.parquet` may contain stale single-gene results until re-run.
+3. **MERFISH panel coverage** — Only ~500 genes measured; many receptors and most excitability genes require imputed matrix or scRNA-only analysis.
+4. **Circular validation** — Allen MERFISH imputed values are predicted from Allen scRNA; treat them as supporting, not independent, evidence.
+5. **Cross-dataset magnitudes differ** — Panels differ in size; use Spearman ρ and detection concordance, not raw log2(CPM+1) equality across datasets.
+6. **Vizgen label transfer is approximate** — Vizgen cells get Allen labels via kNN, not native Vizgen annotations; use `vizgen_label_transfer_min_confidence` to filter.
+7. **Region mismatch across runs** — `find_prior_run_parquet` warns but does not block; re-run source notebooks when changing `brain_areas`.
+8. **Saved notebook outputs may be stale** — Re-execute after YAML or code edits; re-run M1–M4 before M5 if parquets lack `frac_expressing`/`n_cells`.
 
 ---
 
@@ -538,19 +641,20 @@ Exits with error on unsupported Python (≥3.13 or <3.11).
 
 1. Narrow `query_config.yaml` to 1–2 genes and 1–2 broad regions (`STR`, `TH`)
 2. Run M1 dev cell or `verify_setup.py` (without `--quick`)
-3. Run M2 for genes in the 500-gene panel (check MERFISH gene list first)
+3. Run M2 for genes in the 500-gene panel
 
-### Full receptor survey
+### Full receptor + excitability survey
 
-1. Use full config gene list; set `brain_areas` to regions of interest
-2. Run `01_scrna_heatmaps.ipynb` — expect long runtime and large downloads for cortical regions
-3. Run `02_merfish_spatial.ipynb` — set `use_imputed_merfish: false` first to avoid 50 GB download; enable for missing genes
+1. Use the full `gene_panel` (or comment out one category to focus)
+2. Set `brain_areas` and `cell_type_level` (default `supertype`; optional `cell_type_name_filter`)
+3. Run `01_scrna_heatmaps.ipynb` — expect long runtime and large downloads for cortical regions
+4. Run `02_merfish_spatial.ipynb` — set `use_imputed_merfish: false` first to avoid 50 GB download; enable for missing genes
 
-### Cross-dataset validation
+### Cross-dataset validation and synthesis
 
-1. Run M1 + M2 (Allen scRNA + MERFISH); M2 caches `aggregated_merfish.parquet`
-2. Run M3 (Vizgen) and M4 (Zhuang) — they reuse the cached Allen MERFISH aggregate
-3. Run M5 (synthesis) to build the evidence table, concordance, and confidence tiers
+1. Run M1 + M2 (Allen scRNA + MERFISH)
+2. Run M3 (Vizgen) and M4 (Zhuang) — they discover cached Allen MERFISH aggregates
+3. Run M5 (synthesis) to build the evidence table, concordance, confidence tiers, and statement scaffold for a target cell type (e.g. an L5 supertype in `VISpm`)
 
 ---
 
@@ -560,9 +664,10 @@ Exits with error on unsupported Python (≥3.13 or <3.11).
 |----------|----------|---------|
 | [README.md](README.md) | New users | Setup, notebook list, smoke test |
 | **REPOSITORY_GUIDE.md** | Developers / analysts | Architecture, APIs, data flows, caveats |
-| [REVIEW.md](REVIEW.md) | Maintainers | Code/science review, correctness-fix rationale |
+| [REVIEW.md](REVIEW.md) | Maintainers | Code/science review, fix status |
 | [excitability_genes.md](excitability_genes.md) | Analysts | Excitability gene mechanisms, tiers, references |
+| [receptor_excitability.md](receptor_excitability.md) | Analysts | Receptor biology companion for the receptors category |
 
 ---
 
-*Generated from repository analysis. ABC Atlas manifest and download sizes reflect runs against `releases/20260415`.*
+*ABC Atlas manifest and download sizes reflect runs against `releases/20260415`.*

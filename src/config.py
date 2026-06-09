@@ -18,10 +18,12 @@ _VALID_CELL_TYPE_LEVELS = ("class", "subclass", "supertype", "cluster")
 # 'gene_panel' is canonical; 'receptors'/'excitability' kept for backward compat.
 _GENE_PANEL_KEYS = ("gene_panel", "receptors", "excitability")
 
-# Default root for all notebook outputs (figures, parquet). Outside the git repo.
+# Default notebook output root (outside the git repo). Fallback when YAML omits output.output_dir.
 DEFAULT_OUTPUT_DIR = Path(
     "/Users/rancze/Documents/!Projects/Ach_NE_Marius_Felix/exploration"
 )
+# Shared data root for downloaded caches (see query_config.yaml data.* paths).
+EXPRESSO_DATA_ROOT = Path("/Users/rancze/Documents/Data/expresso_data")
 RUN_MANIFEST_NAME = "run_manifest.json"
 
 

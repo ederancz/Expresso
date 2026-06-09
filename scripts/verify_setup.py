@@ -37,10 +37,11 @@ def main() -> int:
         return 1
 
     print("1. Loading config...")
-    from src.config import DEFAULT_OUTPUT_DIR, load_config, start_run
+    from src.config import load_config, resolve_output_dir, start_run
 
     config_path = PROJECT_ROOT / "query_config.yaml"
     config = load_config(config_path)
+    exploration_root = resolve_output_dir(cfg=config)
     assert config["_all_genes"], "No genes in config"
     print(f"   OK — {len(config['_all_genes'])} genes")
 
@@ -97,7 +98,7 @@ def main() -> int:
         PROJECT_ROOT,
         config,
         dataset="WMB-10Xv3",
-        exploration_root=DEFAULT_OUTPUT_DIR,
+        exploration_root=exploration_root,
         notebook="verify_setup",
     )
     out = run_dir / "verify_test_heatmap.png"
