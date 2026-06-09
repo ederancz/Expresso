@@ -446,6 +446,69 @@ cell_type_name_filter:
   - "L5"
 
 # -------------------------------------------------------------------
+# Functional landscape analysis (M5 extension)
+# Rows: cell_type × brain_area (set cell_type_level to supertype in notebooks 01–04).
+# Expression: high/medium tier only; spatial datasets preferred (see expression_priority).
+# Ephys grouping: VISp vs V2M (VISpm + VISam + RSPagl treated as visual, not "RSP").
+# -------------------------------------------------------------------
+functional_analysis:
+  cell_type_level: supertype
+  expression_priority:
+    - allen_merfish   # region-resolved; measured when available, imputed for excitability
+    - vizgen
+    - zhuang
+    - allen_scrna     # broadcast fallback when spatial absent
+  min_module_genes: 2
+  min_targets_for_cluster: 5
+  clustering_method: ward
+  embedding_method: pca          # pca | umap (needs umap-learn)
+  vis_groups:
+    VISp: [VISp]
+    V2M: [VISpm, VISam, RSPagl]
+  experimental_resonance_csv: data/test_experimental_resonance.csv  # one row per ephys cell
+  functional_modules:
+    # --- subthreshold resonance (excitability_genes.md) ---
+    subthreshold_resonance_core:
+      category: excitability
+      description: H- + M-resonance core + INaP amplifier
+      genes: [Hcn1, Hcn2, Kcnq2, Kcnq3, Kcnq5, Scn2a, Scn8a]
+    h_resonance_axis:
+      category: excitability
+      description: I_h / H-resonance (~1–5 Hz)
+      genes: [Hcn1, Hcn2, Pex5l]
+    m_resonance_axis:
+      category: excitability
+      description: I_M / M-resonance (theta band near threshold)
+      genes: [Kcnq2, Kcnq3, Kcnq5]
+    resonance_amplifier:
+      category: excitability
+      description: Persistent Na+ sharpens resonance peak
+      genes: [Scn2a, Scn8a, Fgf12, Fgf13, Fgf14]
+    subthreshold_counterbalance:
+      category: excitability
+      description: A-current, Kir2, leak oppose resonance
+      genes: [Kcnd2, Kcnip2, Kcnj2, Kcnk2]
+    # --- neuromodulator coupling (receptor_excitability.md) ---
+    gi_girk_axis:
+      category: receptors
+      coupling: Gi/Go
+      description: GIRK, ↓cAMP, presynaptic Cav inhibition
+      genes: [Adra2a, Adra2c, Htr1a, Htr1b, Htr1f, Gabbr1, Gabbr2, Drd2, Drd3,
+              Adora1, Cnr1, Grm2, Grm3, Grm4, Grm7, Grm8, Hrh3, Oprd1, Oprk1,
+              Sstr1, Sstr2, Sstr3, Npy1r, Npy2r]
+    gq_plc_axis:
+      category: receptors
+      coupling: Gq/11
+      description: M-current/SK suppression, dendritic facilitation
+      genes: [Chrm1, Chrm3, Chrm5, Adra1a, Adra1b, Htr2a, Grm1, Grm5, Hrh1,
+              Crhr1, Cckbr]
+    gs_camp_hcn_axis:
+      category: receptors
+      coupling: Gs
+      description: ↑cAMP → HCN rightward shift, Cav facilitation
+      genes: [Adrb1, Drd1, Drd5, Adora2a, Hrh2, Htr4, Htr6, Htr7, Vipr1, Adcyap1r1]
+
+# -------------------------------------------------------------------
 # Output settings
 # -------------------------------------------------------------------
 output:

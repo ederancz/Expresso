@@ -482,12 +482,51 @@ def _warn_if_region_mismatch(parquet_path: Path, cfg: dict[str, Any]) -> None:
         )
 
 
+def discover_run_parquets_by_level(
+    cfg: dict[str, Any],
+    *,
+    parquet_filename: str,
+    dataset_slug: str,
+    exploration_root: Path | str | None = None,
+) -> dict[str, Path]:
+    """Newest parquet per ``cell_type_level`` parsed from run folder names.
+
+    Run folders follow ``{timestamp}_{cell_type_level}_{dataset_slug}``
+    (see :func:`start_run`). Returns e.g. ``{"supertype": Path(...), "subclass": ...}``.
+    """
+    root = resolve_output_dir(
+        output_dir=exploration_root,
+        cfg=cfg if exploration_root is None else None,
+    )
+    slug = _sanitize_run_slug(dataset_slug)
+    found: dict[str, Path] = {}
+
+    if not root.is_dir():
+        return found
+
+    for level in _VALID_CELL_TYPE_LEVELS:
+        suffix = f"_{level}_{slug}"
+        candidates: list[Path] = []
+        for run_dir in root.iterdir():
+            if not run_dir.is_dir() or not run_dir.name.endswith(suffix):
+                continue
+            parquet = run_dir / parquet_filename
+            if parquet.is_file():
+                candidates.append(parquet)
+        if candidates:
+            found[level] = sorted(
+                candidates, key=lambda p: p.parent.name, reverse=True,
+            )[0]
+    return found
+
+
 def find_prior_run_parquet(
     cfg: dict[str, Any],
     *,
     parquet_filename: str,
     dataset_slug: str,
     exploration_root: Path | str | None = None,
+    cell_type_level: str | None = None,
 ) -> Path | None:
     """
     Find the most recent prior run parquet under the exploration root.
@@ -496,35 +535,26 @@ def find_prior_run_parquet(
     (same convention as :func:`start_run`). Warns when the chosen parquet's run
     used a different ``brain_areas`` set than ``cfg`` (matching keys on level +
     dataset only, not region).
+
+    Pass ``cell_type_level`` to override ``cfg['cell_type_level']`` (used by
+    functional analysis to source supertype vs subclass runs independently).
     """
     explicit = cfg.get("data", {}).get("allen_merfish_parquet")
-    if explicit:
+    if explicit and cell_type_level is None:
         path = Path(explicit).expanduser()
         if path.is_file():
             _warn_if_region_mismatch(path.resolve(), cfg)
             return path.resolve()
 
-    root = resolve_output_dir(
-        output_dir=exploration_root,
-        cfg=cfg if exploration_root is None else None,
+    level = cell_type_level or cfg["cell_type_level"]
+    by_level = discover_run_parquets_by_level(
+        cfg,
+        parquet_filename=parquet_filename,
+        dataset_slug=dataset_slug,
+        exploration_root=exploration_root,
     )
-    level = cfg["cell_type_level"]
-    suffix = f"_{level}_{_sanitize_run_slug(dataset_slug)}"
-
-    candidates: list[Path] = []
-    if not root.is_dir():
+    chosen = by_level.get(level)
+    if chosen is None:
         return None
-
-    for run_dir in root.iterdir():
-        if not run_dir.is_dir() or not run_dir.name.endswith(suffix):
-            continue
-        parquet = run_dir / parquet_filename
-        if parquet.is_file():
-            candidates.append(parquet)
-
-    if not candidates:
-        return None
-
-    chosen = sorted(candidates, key=lambda p: p.parent.name, reverse=True)[0]
     _warn_if_region_mismatch(chosen, cfg)
     return chosen

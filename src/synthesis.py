@@ -93,8 +93,10 @@ def discover_dataset_parquets(
     config: dict[str, Any],
     *,
     exploration_root: Path | str | None = None,
+    cell_type_level: str | None = None,
 ) -> dict[str, Path]:
     """Locate the newest matching per-dataset aggregate parquet for each dataset."""
+    level = cell_type_level or config["cell_type_level"]
     found: dict[str, Path] = {}
     for key, spec in DATASET_SPECS.items():
         path = find_prior_run_parquet(
@@ -102,6 +104,7 @@ def discover_dataset_parquets(
             parquet_filename=spec["parquet"],
             dataset_slug=_dataset_slug(config, key),
             exploration_root=exploration_root,
+            cell_type_level=level,
         )
         if path is not None:
             found[key] = path
@@ -112,23 +115,30 @@ def gather_dataset_aggregates(
     config: dict[str, Any],
     *,
     exploration_root: Path | str | None = None,
+    cell_type_level: str | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, Path]]:
     """Read available per-dataset aggregate parquets.
 
     Returns ``(aggregates, sources)`` mapping dataset_key -> DataFrame / parquet path.
     Datasets without a discoverable parquet are skipped with a warning (re-run the
     matching notebook to produce them).
+
+    Pass ``cell_type_level`` to load parquets from run folders tagged with that
+    level in their name (e.g. ``*_supertype_MERFISH-*`` vs ``*_subclass_*``).
     """
-    parquets = discover_dataset_parquets(config, exploration_root=exploration_root)
+    level = cell_type_level or config["cell_type_level"]
+    parquets = discover_dataset_parquets(
+        config, exploration_root=exploration_root, cell_type_level=level,
+    )
     aggregates: dict[str, pd.DataFrame] = {}
     for key in DATASET_SPECS:
         path = parquets.get(key)
         if path is None:
             warnings.warn(
-                f"No aggregate parquet found for {key!r} "
+                f"No aggregate parquet found for {key!r} at cell_type_level={level!r} "
                 f"(expected {DATASET_SPECS[key]['parquet']} under a "
-                f"{config['cell_type_level']}/{_dataset_slug(config, key)} run). "
-                "Run the matching notebook first.",
+                f"*_{level}_{_dataset_slug(config, key)} run folder). "
+                "Run the matching notebook at that level first.",
                 UserWarning,
                 stacklevel=2,
             )

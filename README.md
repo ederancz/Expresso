@@ -62,7 +62,9 @@ top-level keys `receptors`/`excitability`, so older configs still load unchanged
 | [`notebooks/02_merfish_spatial.ipynb`](notebooks/02_merfish_spatial.ipynb) | Allen MERFISH heatmaps (cell type × CCF brain area) |
 | [`notebooks/03_vizgen_crossref.ipynb`](notebooks/03_vizgen_crossref.ipynb) | Vizgen MERFISH cross-ref vs Allen |
 | [`notebooks/04_zhuang_crossref.ipynb`](notebooks/04_zhuang_crossref.ipynb) | Zhuang MERFISH cross-ref vs Allen |
-| [`notebooks/05_synthesis.ipynb`](notebooks/05_synthesis.ipynb) | Cross-dataset evidence table, concordance & confidence tiers |
+| [`notebooks/05_synthesis.ipynb`](notebooks/05_synthesis.ipynb) | Cross-dataset evidence table, concordance, confidence tiers, functional landscape |
+
+See [`MILESTONES.md`](MILESTONES.md) for the full roadmap (completed M0–M5, future M6 ephys validation).
 
 **Run order:** notebooks are not fully independent. Run **01** and **02** first (they do not depend on each other). **03** and **04** cross-reference against Allen MERFISH and auto-discover `aggregated_merfish.parquet` from the latest **02** run — wait until **02** finishes before starting **03** or **04**. **05** combines aggregates from **01–04** (`aggregated_scrna`, `aggregated_merfish`, `aggregated_vizgen`, `aggregated_zhuang`); run it last, after all four upstream notebooks have completed.
 
