@@ -58,6 +58,7 @@ def functional_config(config: dict[str, Any]) -> dict[str, Any]:
     fa.setdefault("cell_type_level", config.get("cell_type_level", "supertype"))
     fa.setdefault("expression_priority", list(DEFAULT_EXPRESSION_PRIORITY))
     fa.setdefault("min_module_genes", 2)
+    fa.setdefault("min_score_completeness", 0.5)
     fa.setdefault("min_targets_for_cluster", 5)
     fa.setdefault("clustering_method", "ward")
     fa.setdefault("embedding_method", "pca")
@@ -211,6 +212,31 @@ def brain_area_group(region: str, config: dict[str, Any]) -> str | None:
     return None
 
 
+def sort_targets(
+    index: pd.MultiIndex,
+    config: dict[str, Any],
+) -> pd.MultiIndex:
+    """Order ``(cell_type, brain_area)`` rows: cell type first, then brain area.
+
+    Brain areas follow ``config['brain_areas']`` order when present.
+    """
+    if index.empty:
+        return index
+    df = index.to_frame(index=False)
+    area_order = {
+        str(a): i for i, a in enumerate(config.get("brain_areas") or [])
+    }
+    df["_area_ord"] = df["brain_area"].map(lambda a: area_order.get(str(a), 999))
+    df = df.sort_values(
+        ["cell_type", "_area_ord", "brain_area"],
+        kind="stable",
+    )
+    return pd.MultiIndex.from_frame(
+        df[["cell_type", "brain_area"]],
+        names=["cell_type", "brain_area"],
+    )
+
+
 def _target_index(evidence: pd.DataFrame, config: dict[str, Any]) -> pd.MultiIndex:
     regions = set(config.get("brain_areas") or [])
     sub = evidence[evidence["brain_area"].isin(regions)].copy()
@@ -219,9 +245,9 @@ def _target_index(evidence: pd.DataFrame, config: dict[str, Any]) -> pd.MultiInd
     pairs = (
         sub[["cell_type", "brain_area"]]
         .drop_duplicates()
-        .sort_values(["brain_area", "cell_type"], kind="stable")
     )
-    return pd.MultiIndex.from_frame(pairs, names=["cell_type", "brain_area"])
+    idx = pd.MultiIndex.from_frame(pairs, names=["cell_type", "brain_area"])
+    return sort_targets(idx, config)
 
 
 def pick_expression_value(
@@ -307,6 +333,7 @@ def build_target_expression_matrix(
             })
 
     provenance = pd.DataFrame(prov_rows)
+    matrix = matrix.loc[sort_targets(matrix.index, config)]
     return matrix, provenance
 
 
@@ -357,14 +384,46 @@ def _valid_targets(scores: pd.DataFrame, min_frac: float = 0.5) -> pd.Index:
     return scores.index[ok]
 
 
+def diagnose_module_scores(
+    matrix: pd.DataFrame,
+    scores: pd.DataFrame,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Summarise why clustering may skip targets (tier sparsity, module gaps)."""
+    fa = functional_config(config)
+    min_frac = float(fa.get("min_score_completeness", 0.5))
+    n_modules = len(scores.columns)
+    need_modules = int(np.ceil(min_frac * n_modules)) if n_modules else 0
+    genes_per_target = matrix.notna().sum(axis=1)
+    modules_per_target = scores.notna().sum(axis=1)
+    valid = _valid_targets(scores, min_frac=min_frac)
+    tier_sub = matrix.index  # targets already tier-filtered at build time
+    return {
+        "cell_type_level": fa["cell_type_level"],
+        "n_targets": len(scores),
+        "n_modules": n_modules,
+        "min_score_completeness": min_frac,
+        "min_modules_required": need_modules,
+        "n_targets_clusterable": len(valid),
+        "min_targets_for_cluster": fa["min_targets_for_cluster"],
+        "genes_per_target_median": float(genes_per_target.median()) if len(genes_per_target) else 0,
+        "genes_per_target_max": int(genes_per_target.max()) if len(genes_per_target) else 0,
+        "modules_per_target_median": float(modules_per_target.median()) if len(modules_per_target) else 0,
+        "modules_per_target_max": int(modules_per_target.max()) if len(modules_per_target) else 0,
+        "n_provenance_rows": None,  # filled by caller if desired
+    }
+
+
 def cluster_targets(
     scores: pd.DataFrame,
     config: dict[str, Any],
     *,
-    min_frac: float = 0.5,
+    min_frac: float | None = None,
 ) -> pd.Series:
     """Hierarchical clustering on module scores; returns cluster labels."""
     fa = functional_config(config)
+    if min_frac is None:
+        min_frac = float(fa.get("min_score_completeness", 0.5))
     valid = _valid_targets(scores, min_frac=min_frac)
     if len(valid) < fa["min_targets_for_cluster"]:
         warnings.warn(
@@ -388,11 +447,13 @@ def joint_embedding(
     scores: pd.DataFrame,
     config: dict[str, Any],
     *,
-    min_frac: float = 0.5,
+    min_frac: float | None = None,
     n_components: int = 2,
 ) -> pd.DataFrame:
     """PCA (default) or UMAP on module scores for joint resonance × neuromod view."""
     fa = functional_config(config)
+    if min_frac is None:
+        min_frac = float(fa.get("min_score_completeness", 0.5))
     valid = _valid_targets(scores, min_frac=min_frac)
     if len(valid) < 3:
         return pd.DataFrame(index=scores.index)
@@ -739,7 +800,7 @@ def plot_module_score_heatmap(
     figsize = tuple(config.get("output", {}).get("figsize_heatmap", [14, 8]))
     fig, ax = plt.subplots(figsize=figsize)
 
-    plot_df = scores.copy()
+    plot_df = scores.loc[sort_targets(scores.index, config)].copy()
     plot_df.index = target_labels(plot_df.index)
     sns.heatmap(
         plot_df,
@@ -816,7 +877,8 @@ def plot_cluster_dendrogram(
     title: str = "Hierarchical clustering on module scores",
 ) -> plt.Figure:
     """Dendrogram from module-score Euclidean distance."""
-    valid = _valid_targets(scores, min_frac=0.5)
+    min_frac = float(functional_config(config).get("min_score_completeness", 0.5))
+    valid = sort_targets(_valid_targets(scores, min_frac=min_frac), config)
     sub = scores.loc[valid].fillna(0.0)
     fig, ax = plt.subplots(figsize=(12, 5))
     if len(valid) < 3:
@@ -852,10 +914,12 @@ def export_functional_landscape(
     paths: dict[str, Path] = {}
 
     mat_path = out / "expression_matrix.parquet"
+    matrix = matrix.loc[sort_targets(matrix.index, config)]
     matrix.reset_index().to_parquet(mat_path, index=False)
     paths["expression_matrix"] = mat_path
 
     score_path = out / "module_scores.parquet"
+    scores = scores.loc[sort_targets(scores.index, config)]
     scores.reset_index().to_parquet(score_path, index=False)
     paths["module_scores"] = score_path
 
