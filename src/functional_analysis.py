@@ -22,7 +22,16 @@ from scipy.cluster import hierarchy
 from scipy.spatial.distance import pdist
 
 from src.config import discover_run_parquets_by_level
-from src.synthesis import DATASET_SPECS, EXPRESSED_TIERS, _dataset_slug
+from src.synthesis import (
+    DATASET_SPECS,
+    EXPRESSED_TIERS,
+    _dataset_slug,
+    all_brain_areas_for_reports,
+    append_region_rollups,
+    rollup_brain_area_label,
+    rollup_groups,
+    rollup_methods,
+)
 from src.utils import filter_cell_types_by_name
 
 TEST_EXPERIMENTAL_RESONANCE_REL = Path("data/test_experimental_resonance.csv")
@@ -66,7 +75,37 @@ def functional_config(config: dict[str, Any]) -> dict[str, Any]:
         "VISp": ["VISp"],
         "V2M": ["VISpm", "VISam", "RSPagl"],
     })
+    fa.setdefault("region_rollup_methods", ["unweighted_mean", "cell_count_weighted"])
     return fa
+
+
+def functional_view_specs(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Analysis views: CCF (4 parcels) and VISp+V2M (×2 rollup methods)."""
+    ccf_regions = list(config.get("brain_areas") or [])
+    views: list[dict[str, Any]] = [
+        {
+            "id": "ccf",
+            "regions": ccf_regions,
+            "title": "CCF parcels (4 regions)",
+            "subdir": "ccf",
+        },
+    ]
+    for method in rollup_methods(config):
+        group = next(iter(rollup_groups(config)), "V2M")
+        label = rollup_brain_area_label(group, method)
+        method_title = (
+            "cell-count weighted mean"
+            if method == "cell_count_weighted"
+            else "unweighted mean"
+        )
+        views.append({
+            "id": f"visp_{label.lower()}",
+            "regions": ["VISp", label],
+            "title": f"VISp + {group} ({method_title})",
+            "subdir": "visp_v2m_weighted" if method == "cell_count_weighted" else "visp_v2m",
+            "rollup_method": method,
+        })
+    return views
 
 
 def default_experimental_resonance_path(project_root: Path | str) -> Path:
@@ -169,6 +208,7 @@ def prepare_functional_evidence(
     evidence = syn.build_evidence_table(
         aggregates, config, allen_gene_sources=allen_gene_sources,
     )
+    evidence = append_region_rollups(evidence, config)
     return evidence, sources, report
 
 
@@ -205,9 +245,11 @@ def load_functional_modules(config: dict[str, Any]) -> dict[str, dict[str, Any]]
 
 
 def brain_area_group(region: str, config: dict[str, Any]) -> str | None:
-    """Map CCF acronym to ephys grouping (VISp vs V2M)."""
+    """Map CCF acronym (or synthetic rollup) to ephys grouping (VISp vs V2M)."""
+    if region.endswith("_wt"):
+        return region[:-3]
     for group, regions in functional_config(config).get("vis_groups", {}).items():
-        if region in regions:
+        if region in regions or region == group:
             return group
     return None
 
@@ -224,7 +266,7 @@ def sort_targets(
         return index
     df = index.to_frame(index=False)
     area_order = {
-        str(a): i for i, a in enumerate(config.get("brain_areas") or [])
+        str(a): i for i, a in enumerate(all_brain_areas_for_reports(config))
     }
     df["_area_ord"] = df["brain_area"].map(lambda a: area_order.get(str(a), 999))
     df = df.sort_values(
@@ -238,7 +280,7 @@ def sort_targets(
 
 
 def _target_index(evidence: pd.DataFrame, config: dict[str, Any]) -> pd.MultiIndex:
-    regions = set(config.get("brain_areas") or [])
+    regions = set(all_brain_areas_for_reports(config))
     sub = evidence[evidence["brain_area"].isin(regions)].copy()
     cell_types = filter_cell_types_by_name(sub["cell_type"].unique(), config)
     sub = sub[sub["cell_type"].isin(cell_types)]
@@ -617,8 +659,15 @@ def summarize_experimental_match(
     experimental: pd.DataFrame,
     coarse_type: str | None,
     brain_area_group: str | None,
+    *,
+    brain_area: str | None = None,
 ) -> dict[str, Any]:
-    """Aggregate single-cell ephys stats for a coarse_type × area group."""
+    """Aggregate single-cell ephys stats for a coarse_type × area group.
+
+    When ``brain_area`` is a CCF parcel and ephys rows carry a matching
+    ``brain_area`` column, those cells are preferred; otherwise falls back to
+    ``brain_area_group`` (VISp vs V2M).
+    """
     empty: dict[str, Any] = {
         "ephys_n_cells": 0,
         "ephys_n_with_peak": 0,
@@ -631,10 +680,26 @@ def summarize_experimental_match(
     if experimental.empty or not coarse_type or not brain_area_group:
         return empty
 
-    match = experimental[
-        (experimental["coarse_type"] == coarse_type)
-        & (experimental["brain_area_group"] == brain_area_group)
-    ]
+    base = experimental[experimental["coarse_type"] == coarse_type]
+    if base.empty:
+        return empty
+
+    match = base
+    match_mode = "area_group"
+    if (
+        brain_area
+        and "brain_area" in base.columns
+        and base["brain_area"].astype(str).str.strip().ne("").any()
+    ):
+        ccf = base[base["brain_area"].astype(str).str.strip() == str(brain_area)]
+        if not ccf.empty:
+            match = ccf
+            match_mode = "ccf"
+        else:
+            match = base[base["brain_area_group"] == brain_area_group]
+    else:
+        match = base[base["brain_area_group"] == brain_area_group]
+
     if match.empty:
         return empty
 
@@ -647,7 +712,7 @@ def summarize_experimental_match(
         "ephys_peak_resonance_hz_std": float(valid["peak_resonance_hz"].std(ddof=1)) if len(valid) > 1 else np.nan,
         "ephys_resonance_strength_mean": float(valid["resonance_strength"].mean()) if len(valid) else np.nan,
         "ephys_subcluster_hints": ", ".join(hints),
-        "ephys_match": "cell_level_summary",
+        "ephys_match": f"cell_level_{match_mode}",
     }
     return out
 
@@ -781,10 +846,157 @@ def link_targets_to_experimental(
         for col in module_scores.columns:
             rec[f"score_{col}"] = score_row[col]
 
-        rec.update(summarize_experimental_match(experimental, coarse, bag))
+        rec.update(summarize_experimental_match(experimental, coarse, bag, brain_area=str(ba)))
         rows.append(rec)
 
     return pd.DataFrame(rows)
+
+
+def filter_targets_by_regions(
+    matrix: pd.DataFrame,
+    regions: list[str],
+) -> pd.DataFrame:
+    """Subset a target-indexed matrix to the given brain areas."""
+    if matrix.empty:
+        return matrix
+    areas = matrix.index.get_level_values("brain_area").astype(str)
+    return matrix.loc[areas.isin(regions)]
+
+
+def filter_provenance_by_regions(
+    provenance: pd.DataFrame,
+    regions: list[str],
+) -> pd.DataFrame:
+    if provenance.empty or "brain_area" not in provenance.columns:
+        return provenance
+    return provenance[provenance["brain_area"].isin(regions)].copy()
+
+
+def run_functional_landscape_view(
+    expr_matrix: pd.DataFrame,
+    expr_prov: pd.DataFrame,
+    modules: dict[str, dict[str, Any]],
+    config: dict[str, Any],
+    output_dir: Path | str,
+    *,
+    view: dict[str, Any],
+    func_level: str,
+) -> dict[str, Any]:
+    """Module scores, clustering, embedding, and figures for one region view."""
+    regions = view["regions"]
+    title = view["title"]
+    subdir = view["subdir"]
+    view_id = view["id"]
+
+    matrix = filter_targets_by_regions(expr_matrix, regions)
+    prov = filter_provenance_by_regions(expr_prov, regions)
+    if matrix.empty:
+        warnings.warn(
+            f"Functional view {view_id!r}: no targets for regions {regions}; skipping.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return {"view": view, "matrix": matrix, "paths": {}}
+
+    fa_cfg = functional_config(config)
+    module_scores = compute_module_scores(
+        matrix,
+        modules,
+        min_genes=fa_cfg["min_module_genes"],
+    )
+    clusters = cluster_targets(module_scores, config)
+    embedding = joint_embedding(module_scores, config)
+
+    func_dir = Path(output_dir) / "functional" / subdir
+    func_dir.mkdir(parents=True, exist_ok=True)
+
+    title_prefix = f"{title} — {func_level}"
+    paths: dict[str, Path] = {}
+
+    hm_path = func_dir / "module_scores_heatmap.pdf"
+    plot_module_score_heatmap(
+        module_scores, config,
+        output_path=hm_path,
+        title=f"Module scores — {title_prefix}",
+    )
+    paths["module_scores_heatmap"] = hm_path
+
+    expr_hm_path = func_dir / "expression_heatmap.pdf"
+    plot_expression_heatmap(
+        matrix, config,
+        output_path=expr_hm_path,
+        title=f"Gene expression (z-scored) — {title_prefix}",
+    )
+    paths["expression_heatmap"] = expr_hm_path
+
+    dend_path = func_dir / "module_cluster_dendrogram.pdf"
+    plot_cluster_dendrogram(
+        module_scores, config,
+        output_path=dend_path,
+        title=f"Hierarchical clustering — {title_prefix}",
+    )
+    paths["module_cluster_dendrogram"] = dend_path
+
+    emb_res_path = func_dir / "joint_embedding_resonance_color.pdf"
+    plot_joint_embedding(
+        embedding, module_scores, config,
+        color_module="subthreshold_resonance_core",
+        output_path=emb_res_path,
+        title=f"Joint embedding (resonance) — {title_prefix}",
+    )
+    paths["joint_embedding_resonance_color"] = emb_res_path
+
+    emb_area_path = func_dir / "joint_embedding_area_group.pdf"
+    plot_joint_embedding(
+        embedding, module_scores, config,
+        color_module=None,
+        output_path=emb_area_path,
+        title=f"Joint embedding (area group) — {title_prefix}",
+    )
+    paths["joint_embedding_area_group"] = emb_area_path
+
+    return {
+        "view": view,
+        "matrix": matrix,
+        "provenance": prov,
+        "module_scores": module_scores,
+        "clusters": clusters,
+        "embedding": embedding,
+        "paths": paths,
+        "func_dir": func_dir,
+    }
+
+
+def plot_expression_heatmap(
+    matrix: pd.DataFrame,
+    config: dict[str, Any],
+    *,
+    output_path: Path | str | None = None,
+    title: str = "Gene expression (z-scored across targets)",
+) -> plt.Figure:
+    """Heatmap of z-scored gene expression (targets × genes)."""
+    cmap = config.get("output", {}).get("heatmap_cmap", "RdBu_r")
+    figsize = tuple(config.get("output", {}).get("figsize_heatmap", [14, 8]))
+    fig, ax = plt.subplots(figsize=figsize)
+
+    plot_df = zscore_across_targets(matrix)
+    plot_df = plot_df.loc[sort_targets(plot_df.index, config)]
+    plot_df.index = target_labels(plot_df.index)
+    sns.heatmap(
+        plot_df,
+        cmap=cmap,
+        center=0,
+        ax=ax,
+        cbar_kws={"label": "z-scored expression"},
+        linewidths=0.0,
+    )
+    ax.set_title(title)
+    ax.set_xlabel("Gene")
+    ax.set_ylabel("Target (cell_type × brain_area)")
+    plt.tight_layout()
+    if output_path:
+        fig.savefig(output_path, dpi=config.get("output", {}).get("dpi", 150), bbox_inches="tight")
+    return fig
 
 
 def plot_module_score_heatmap(
@@ -904,12 +1116,16 @@ def export_functional_landscape(
     provenance: pd.DataFrame,
     link_table: pd.DataFrame,
     output_dir: Path | str,
+    config: dict[str, Any],
     *,
     vis_contrast: pd.DataFrame | None = None,
     level_report: pd.DataFrame | None = None,
+    subdir: str | None = None,
 ) -> dict[str, Path]:
     """Write functional analysis outputs to ``output_dir / functional/``."""
     out = Path(output_dir) / "functional"
+    if subdir:
+        out = out / subdir
     out.mkdir(parents=True, exist_ok=True)
     paths: dict[str, Path] = {}
 

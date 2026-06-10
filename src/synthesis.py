@@ -70,6 +70,7 @@ DEFAULT_MIN_MEAN = 1.0
 DEFAULT_GENES_PER_PAGE = 25
 MIN_GENE_ROWS = 10  # minimum vertical slots so sparse families fill an A4 page
 EXPRESSED_TIERS = frozenset({"high", "medium"})
+REGION_ROLLUP_METHODS: tuple[str, ...] = ("unweighted_mean", "cell_count_weighted")
 
 # A4 landscape (inches) — every PDF page uses this size for consistent printing.
 A4_LANDSCAPE: tuple[float, float] = (11.69, 8.27)
@@ -172,6 +173,214 @@ def _detection_flag(
     return by_mean & by_frac
 
 
+def _weighted_nanmean(values: np.ndarray, weights: np.ndarray) -> float:
+    """Nan-safe weighted mean; falls back to unweighted if weights are zero."""
+    v = np.asarray(values, dtype=float)
+    w = np.asarray(weights, dtype=float)
+    mask = np.isfinite(v)
+    if not mask.any():
+        return float("nan")
+    v = v[mask]
+    w = np.where(np.isfinite(w[mask]), w[mask], 0.0)
+    if w.sum() <= 0:
+        return float(np.nanmean(v))
+    return float(np.average(v, weights=w))
+
+
+def rollup_groups(config: dict[str, Any]) -> dict[str, list[str]]:
+    """Region groups to collapse (e.g. V2M ← VISpm, VISam, RSPagl)."""
+    fa = config.get("functional_analysis") or {}
+    rollups_cfg = fa.get("region_rollups")
+    if rollups_cfg:
+        out: dict[str, list[str]] = {}
+        for name, spec in rollups_cfg.items():
+            if isinstance(spec, dict):
+                out[name] = list(spec.get("members") or [])
+            else:
+                out[name] = list(spec)
+        return {k: v for k, v in out.items() if v}
+    vis_groups = fa.get("vis_groups") or {}
+    return {
+        name: list(members)
+        for name, members in vis_groups.items()
+        if len(members) > 1
+    }
+
+
+def rollup_methods(config: dict[str, Any]) -> list[str]:
+    """Aggregation methods to apply when building synthetic rollup regions."""
+    fa = config.get("functional_analysis") or {}
+    configured = fa.get("region_rollup_methods")
+    if configured:
+        return list(configured)
+    return list(REGION_ROLLUP_METHODS)
+
+
+def rollup_brain_area_label(group: str, method: str) -> str:
+    """Synthetic ``brain_area`` label for a rollup group and method."""
+    if method == "cell_count_weighted":
+        return f"{group}_wt"
+    return group
+
+
+def all_brain_areas_for_reports(config: dict[str, Any]) -> list[str]:
+    """CCF parcels plus synthetic rollup targets (V2M, V2M_wt, …)."""
+    areas = list(config.get("brain_areas") or [])
+    for group_name in rollup_groups(config):
+        for method in rollup_methods(config):
+            label = rollup_brain_area_label(group_name, method)
+            if label not in areas:
+                areas.append(label)
+    return areas
+
+
+def _assign_confidence_tiers(
+    master: pd.DataFrame,
+    *,
+    min_frac: float,
+    min_mean: float,
+) -> pd.DataFrame:
+    """Recompute per-dataset detection flags and row confidence tiers."""
+    out = master.copy()
+    for key in DATASET_SPECS:
+        mean_col = f"{key}_mean"
+        if mean_col not in out.columns:
+            continue
+        frac_col = f"{key}_frac"
+        out[f"{key}_expressed"] = _detection_flag(
+            out[mean_col],
+            out[frac_col] if frac_col in out.columns else pd.Series(np.nan, index=out.index),
+            min_frac=min_frac,
+            min_mean=min_mean,
+        ).fillna(False)
+
+    indep_measured = pd.Series(0, index=out.index, dtype=int)
+    n_present = pd.Series(0, index=out.index, dtype=int)
+    supporting_imputed = pd.Series(False, index=out.index)
+
+    for key in DATASET_SPECS:
+        mean_col = f"{key}_mean"
+        if mean_col not in out.columns:
+            continue
+        spec = DATASET_SPECS[key]
+        present = out[mean_col].notna()
+        n_present = n_present + present.astype(int)
+        expressed = out[f"{key}_expressed"].fillna(False)
+        source_col = f"{key}_source"
+        is_measured = (
+            out[source_col] == "measured"
+            if source_col in out.columns
+            else pd.Series(False, index=out.index)
+        )
+        if spec["independent"]:
+            indep_measured = indep_measured + (expressed & is_measured).astype(int)
+        if spec["has_imputed"] and source_col in out.columns:
+            supporting_imputed = supporting_imputed | (
+                expressed & (out[source_col] == "imputed")
+            )
+
+    out["n_datasets_present"] = n_present
+    out["n_independent_measured_detections"] = indep_measured
+    out["supporting_imputed_detection"] = supporting_imputed
+
+    def _tier(row: pd.Series) -> str:
+        if row["n_independent_measured_detections"] >= 2:
+            return "high"
+        if row["n_independent_measured_detections"] == 1:
+            return "medium"
+        if row["supporting_imputed_detection"]:
+            return "low"
+        return "none"
+
+    out["confidence_tier"] = out.apply(_tier, axis=1)
+    return out
+
+
+def append_region_rollups(
+    evidence: pd.DataFrame,
+    config: dict[str, Any],
+    *,
+    min_frac: float | None = None,
+    min_mean: float | None = None,
+) -> pd.DataFrame:
+    """Append synthetic rollup rows (e.g. V2M) with recomputed confidence tiers.
+
+    Rollup expression is aggregated from constituent CCF parcels using each
+    configured method (unweighted mean and/or cell-count weighted mean).
+    """
+    groups = rollup_groups(config)
+    if not groups:
+        return evidence
+
+    synth_cfg = config.get("synthesis", {}) or {}
+    min_frac = float(synth_cfg.get("min_frac", DEFAULT_MIN_FRAC)) if min_frac is None else min_frac
+    min_mean = float(synth_cfg.get("min_mean", DEFAULT_MIN_MEAN)) if min_mean is None else min_mean
+    methods = rollup_methods(config)
+    dataset_keys = [k for k in DATASET_SPECS if f"{k}_mean" in evidence.columns]
+
+    new_rows: list[dict[str, Any]] = []
+    for group_name, members in groups.items():
+        memb = evidence[evidence["brain_area"].isin(members)]
+        if memb.empty:
+            continue
+        for method in methods:
+            label = rollup_brain_area_label(group_name, method)
+            for (ct, gene), chunk in memb.groupby(["cell_type", "gene"], observed=True):
+                rec: dict[str, Any] = {
+                    "cell_type": ct,
+                    "brain_area": label,
+                    "gene": gene,
+                    "family": chunk["family"].iloc[0],
+                    "region_rollup": True,
+                    "rollup_group": group_name,
+                    "rollup_method": method,
+                    "rollup_members": ",".join(members),
+                }
+                if "category" in chunk.columns:
+                    rec["category"] = chunk["category"].iloc[0]
+
+                for key in dataset_keys:
+                    spec = DATASET_SPECS[key]
+                    means = chunk[f"{key}_mean"].to_numpy(dtype=float)
+                    fracs = chunk[f"{key}_frac"].to_numpy(dtype=float)
+                    ncells = chunk[f"{key}_n_cells"].to_numpy(dtype=float)
+                    if method == "cell_count_weighted":
+                        rec[f"{key}_mean"] = _weighted_nanmean(means, ncells)
+                        rec[f"{key}_frac"] = _weighted_nanmean(fracs, ncells)
+                    else:
+                        rec[f"{key}_mean"] = float(np.nanmean(means))
+                        rec[f"{key}_frac"] = float(np.nanmean(fracs))
+                    rec[f"{key}_n_cells"] = float(np.nansum(ncells))
+
+                    source_col = f"{key}_source"
+                    if source_col in chunk.columns:
+                        sources = chunk[source_col].dropna().unique().tolist()
+                        if len(sources) == 1:
+                            rec[source_col] = sources[0]
+                        elif "measured" in sources:
+                            rec[source_col] = "measured"
+                        elif sources:
+                            rec[source_col] = sources[0]
+                        else:
+                            rec[source_col] = None
+                    rec[f"{key}_region_resolved"] = bool(spec["region_resolved"])
+
+                new_rows.append(rec)
+
+    out = evidence.copy()
+    if "region_rollup" not in out.columns:
+        out["region_rollup"] = False
+    if not new_rows:
+        return out
+
+    rollup_df = _assign_confidence_tiers(
+        pd.DataFrame(new_rows),
+        min_frac=min_frac,
+        min_mean=min_mean,
+    )
+    return pd.concat([out, rollup_df], ignore_index=True)
+
+
 def build_evidence_table(
     aggregates: dict[str, pd.DataFrame],
     config: dict[str, Any],
@@ -260,40 +469,9 @@ def build_evidence_table(
             min_mean=min_mean,
         ).fillna(False)
 
-    # Concordance: independent measured detections vs supporting imputed.
-    indep_measured = pd.Series(0, index=master.index, dtype=int)
-    n_present = pd.Series(0, index=master.index, dtype=int)
-    supporting_imputed = pd.Series(False, index=master.index)
-
-    for key in DATASET_SPECS:
-        if key not in aggregates:
-            continue
-        spec = DATASET_SPECS[key]
-        present = master[f"{key}_mean"].notna()
-        n_present = n_present + present.astype(int)
-        expressed = master[f"{key}_expressed"].fillna(False)
-        is_measured = master[f"{key}_source"] == "measured"
-        if spec["independent"]:
-            indep_measured = indep_measured + (expressed & is_measured).astype(int)
-        if spec["has_imputed"]:
-            supporting_imputed = supporting_imputed | (
-                expressed & (master[f"{key}_source"] == "imputed")
-            )
-
-    master["n_datasets_present"] = n_present
-    master["n_independent_measured_detections"] = indep_measured
-    master["supporting_imputed_detection"] = supporting_imputed
-
-    def _tier(row: pd.Series) -> str:
-        if row["n_independent_measured_detections"] >= 2:
-            return "high"
-        if row["n_independent_measured_detections"] == 1:
-            return "medium"
-        if row["supporting_imputed_detection"]:
-            return "low"
-        return "none"
-
-    master["confidence_tier"] = master.apply(_tier, axis=1)
+    master = _assign_confidence_tiers(master, min_frac=min_frac, min_mean=min_mean)
+    if "region_rollup" not in master.columns:
+        master["region_rollup"] = False
     return master
 
 
@@ -645,7 +823,7 @@ def list_report_targets(
     """
     from src.utils import filter_cell_types_by_name
 
-    regions = list(regions if regions is not None else config.get("brain_areas") or [])
+    regions = list(regions if regions is not None else all_brain_areas_for_reports(config))
     if not regions:
         raise ValueError("No regions specified and config has no brain_areas")
 
