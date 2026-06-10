@@ -4,7 +4,7 @@ Builds on the synthesis evidence table (high/medium tier only) with a
 multi-level spatial expression picker so area-specific differences (e.g.
 VISp vs VISpm) can use MERFISH/Vizgen/Zhuang before scRNA fallback.
 
-Rows are (cell_type, brain_area) targets — typically supertype × region.
+Rows are (cell_type, brain_area) targets at ``config['cell_type_level']``.
 Experimental resonance linking is stubbed for a later milestone.
 """
 
@@ -64,7 +64,6 @@ EXPERIMENTAL_RESONANCE_COLUMNS: tuple[str, ...] = (
 def functional_config(config: dict[str, Any]) -> dict[str, Any]:
     """Return the ``functional_analysis`` block with defaults filled in."""
     fa = dict(config.get("functional_analysis") or {})
-    fa.setdefault("cell_type_level", config.get("cell_type_level", "supertype"))
     fa.setdefault("expression_priority", list(DEFAULT_EXPRESSION_PRIORITY))
     fa.setdefault("min_module_genes", 2)
     fa.setdefault("min_score_completeness", 0.5)
@@ -134,7 +133,7 @@ def build_level_source_report(
     exploration_root: Path | str | None = None,
 ) -> pd.DataFrame:
     """Audit which datasets exist at each cell_type_level (from run folder names)."""
-    needed = functional_config(config)["cell_type_level"]
+    needed = config["cell_type_level"]
     rows: list[dict[str, Any]] = []
     for key, spec in DATASET_SPECS.items():
         slug = _dataset_slug(config, key)
@@ -162,7 +161,7 @@ def print_level_source_report(report: pd.DataFrame) -> None:
         print("No datasets in registry.")
         return
     needed = report["required_level"].iloc[0]
-    print(f"Functional analysis requires cell_type_level={needed!r} run folders.")
+    print(f"Dataset parquets for cell_type_level={needed!r}:")
     for _, row in report.iterrows():
         if row["status"] == "ok":
             print(f"  ✓ {row['dataset']}: {row['run_folder']}")
@@ -185,16 +184,24 @@ def print_level_source_report(report: pd.DataFrame) -> None:
 def prepare_functional_evidence(
     config: dict[str, Any],
     *,
+    evidence: pd.DataFrame | None = None,
     exploration_root: Path | str | None = None,
     allen_gene_sources: dict[str, str] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Path], pd.DataFrame]:
-    """Build evidence at ``functional_analysis.cell_type_level`` from run folders."""
+    """Return functional evidence at ``config['cell_type_level']``.
+
+    Pass ``evidence`` to reuse the synthesis table (recommended in notebook 05 so
+    functional outputs match the main evidence table and target reports).
+    """
     from src import synthesis as syn
 
-    level = functional_config(config)["cell_type_level"]
     report = build_level_source_report(
         config, exploration_root=exploration_root,
     )
+    if evidence is not None:
+        return evidence, {}, report
+
+    level = config["cell_type_level"]
     aggregates, sources = syn.gather_dataset_aggregates(
         config,
         exploration_root=exploration_root,
@@ -205,11 +212,11 @@ def prepare_functional_evidence(
             f"No aggregates found at cell_type_level={level!r}. "
             "See level source report for which notebooks to re-run."
         )
-    evidence = syn.build_evidence_table(
+    built = syn.build_evidence_table(
         aggregates, config, allen_gene_sources=allen_gene_sources,
     )
-    evidence = append_region_rollups(evidence, config)
-    return evidence, sources, report
+    built = append_region_rollups(built, config)
+    return built, sources, report
 
 
 def load_functional_modules(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -441,7 +448,7 @@ def diagnose_module_scores(
     valid = _valid_targets(scores, min_frac=min_frac)
     tier_sub = matrix.index  # targets already tier-filtered at build time
     return {
-        "cell_type_level": fa["cell_type_level"],
+        "cell_type_level": config["cell_type_level"],
         "n_targets": len(scores),
         "n_modules": n_modules,
         "min_score_completeness": min_frac,
@@ -859,8 +866,9 @@ def filter_targets_by_regions(
     """Subset a target-indexed matrix to the given brain areas."""
     if matrix.empty:
         return matrix
+    region_set = {str(r) for r in regions}
     areas = matrix.index.get_level_values("brain_area").astype(str)
-    return matrix.loc[areas.isin(regions)]
+    return matrix.loc[areas.isin(region_set)]
 
 
 def filter_provenance_by_regions(
@@ -890,6 +898,7 @@ def run_functional_landscape_view(
 
     matrix = filter_targets_by_regions(expr_matrix, regions)
     prov = filter_provenance_by_regions(expr_prov, regions)
+    view_areas = sorted(matrix.index.get_level_values("brain_area").unique()) if not matrix.empty else []
     if matrix.empty:
         warnings.warn(
             f"Functional view {view_id!r}: no targets for regions {regions}; skipping.",
@@ -911,6 +920,7 @@ def run_functional_landscape_view(
     func_dir.mkdir(parents=True, exist_ok=True)
 
     title_prefix = f"{title} — {func_level}"
+    print(f"  {len(matrix)} targets | brain areas: {view_areas}")
     paths: dict[str, Path] = {}
 
     hm_path = func_dir / "module_scores_heatmap.pdf"
@@ -964,6 +974,7 @@ def run_functional_landscape_view(
         "embedding": embedding,
         "paths": paths,
         "func_dir": func_dir,
+        "view_areas": view_areas,
     }
 
 

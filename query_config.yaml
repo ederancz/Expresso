@@ -437,7 +437,7 @@ brain_areas:
 # Cluster (~5,322): maximally fine, often area-specific leaf nodes, but cell counts per area get small for lowly expressed genes.
 
 # -------------------------------------------------------------------
-cell_type_level: supertype
+cell_type_level: subclass
 
 # Optional loose filter: keep cell types whose name contains any substring below.
 # Use [] or omit to include all types at cell_type_level.
@@ -447,14 +447,11 @@ cell_type_name_filter:
 
 # -------------------------------------------------------------------
 # Functional landscape analysis (M5 extension)
-# Rows: cell_type × brain_area (set cell_type_level to supertype in notebooks 01–04).
-# Expression: high/medium tier only; spatial datasets preferred (see expression_priority).
-# Ephys grouping: VISp vs V2M (VISpm + VISam + RSPagl treated as visual, not "RSP").
+# Uses the same cell_type_level as the rest of the pipeline (config cell_type_level).
+# Rows: cell_type × brain_area. Expression: high/medium tier only; spatial datasets
+# preferred (see expression_priority). Ephys grouping: VISp vs V2M.
 # -------------------------------------------------------------------
 functional_analysis:
-  # Functional clustering needs dense module scores; supertype is recommended
-  # (subclass + high/medium tier alone often yields 0 clusterable targets).
-  cell_type_level: supertype
   min_score_completeness: 0.5   # fraction of modules non-NaN per target for clustering/PCA
   expression_priority:
     - allen_merfish   # region-resolved; measured when available, imputed for excitability
