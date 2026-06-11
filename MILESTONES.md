@@ -116,73 +116,113 @@ Goes beyond inventory to **mechanism-oriented grouping**:
 | Feature | Description |
 |---------|-------------|
 | Functional modules | Resonance axes (H-resonance, M-resonance, INaP amplifier, …) + coupling-centric neuromodulator axes (Gi/Gq/Gs) |
-| Targets | `(supertype, brain_area)` — sourced from run folders at `functional_analysis.cell_type_level`, independent of main synthesis level |
+| Targets | `(cell_type, brain_area)` at **`config.cell_type_level`** — same evidence table as synthesis (no separate level override) |
+| Region rollups | Synthetic **V2M** (unweighted mean) and **V2M_wt** (cell-count weighted) from VISpm + VISam + RSPagl; tiers recomputed |
+| Three analysis views | **CCF** (4 parcels) · **VISp+V2M** · **VISp+V2M_wt** — separate module/gene heatmaps, clustering, PCA, exports |
 | Expression picker | Spatial priority: MERFISH → Vizgen → Zhuang → scRNA; high/medium tier only |
-| Module scores | Z-scored gene means per module per target |
-| Clustering | Hierarchical clustering on module-score vectors |
-| Joint embedding | PCA (or UMAP) over resonance + neuromod modules |
-| VISp vs V2M contrast | Per supertype: V2M − VISp module-score deltas (`vis_group_contrast.csv`) |
-| Ephys placeholder | Single-cell schema + test fixture; cohort summaries linked to atlas targets |
+| Module scores | Z-scored gene means per module per target (recomputed within each view) |
+| VISp vs V2M contrast | From CCF view: V2M − VISp module-score deltas (`functional/ccf/vis_group_contrast.csv`) |
+| Ephys link (M5) | Cohort summaries per atlas target; CCF `brain_area` preferred when present in ephys CSV |
 
-**Outputs:** `{run_dir}/functional/` — module scores, embedding, dendrogram PDFs, provenance, level source report.
+**Outputs:** `{run_dir}/functional/{ccf,visp_v2m,visp_v2m_weighted}/` — parquets, module + expression heatmaps, dendrogram, embedding PDFs, ephys link table.
 
-**Test fixture:** [`data/test_experimental_resonance.csv`](data/test_experimental_resonance.csv) — **one row per ephys cell** (n≈20 per coarse_type × area); L5 ET / VISp is bimodal (`ET_low` / `ET_high`) to demo within-type heterogeneity.
+**Test fixture:** [`data/test_experimental_resonance.csv`](data/test_experimental_resonance.csv) — schema demo only; replace for M6.
 
 ---
 
 ## Operational state (June 2026)
 
-You have production runs at **both supertype and subclass** levels in the exploration
-folder. The pipeline handles this explicitly:
+- **Single taxonomy level:** `cell_type_level` in `query_config.yaml` drives notebooks 01–05, synthesis reports, and functional landscape. Re-run 01–04 at the chosen level before M5.
+- **Exploration folder** may contain runs at multiple levels; M5 discovers the newest parquet matching `config.cell_type_level` per dataset.
+- **Functional landscape** reuses the synthesis `evidence` table (including V2M rollups) — no second parquet load.
 
-- Main synthesis cells use `config.cell_type_level` (currently **subclass** in YAML).
-- Functional landscape auto-sources **supertype** runs via folder-name parsing and
-  warns if any dataset is missing at that level (`level_source_report.csv`).
+**Typical M5 run:**
 
-**Recommended next execution:**
-
-1. Ensure supertype runs exist for all four datasets (01–04) — scRNA supertype run
-   is present; verify MERFISH / Vizgen / Zhuang supertype parquets match functional
-   needs.
-2. Run M5 through functional landscape cells.
-3. Inspect `functional/vis_group_contrast.csv` and joint embedding coloured by
-   VISp vs V2M.
-4. Within L5 supertypes, check whether `h_resonance_axis` vs `m_resonance_axis`
-   scores separate IT-like from ET-like groups.
+1. Run 01–04 at desired level (e.g. subclass or supertype).
+2. Run notebook 05 through functional cells.
+3. Compare `functional/ccf/` vs `functional/visp_v2m/` — row counts and brain areas should differ.
+4. Inspect `vis_group_contrast.csv` and L5 IT vs L5 ET module separation in the VISp+V2M view.
 
 ---
 
 ## Future milestones
 
-### M6 — Ephys ↔ expression validation *(next)*
+### M6 — Ephys ↔ expression validation *(next — awaiting QC re-upload)*
 
 **Goal:** Close the loop between **single-cell resonance recordings** and
-**expression-based functional modules** — including subclusters *within* broad types
-(e.g. two functional subgroups inside L5 ET).
+**pseudobulk expression module scores** — including subclusters *within* broad types
+(e.g. functional subgroups inside L5 ET).
 
-**Prerequisites (done):**
+**Real data (control):**
+`/Users/rancze/Documents/Data/expresso_data/physiology/restructured/control_excitability.csv`
+— 100 cells × 87 columns. Schema audit: `scripts/audit_ephys_schema.py`.
 
-- Single-cell ephys CSV schema (`cell_id`, `coarse_type`, `brain_area_group`, `peak_resonance_hz`, …)
-- `experimental_within_type_summary()` — flags bimodal / multi-hint cohorts
-- `link_targets_to_experimental()` — atlas target ↔ ephys cohort summaries (placeholder)
-- Test fixture with L5 ET VISp bimodal subclusters
+**Status:** Phase 0 audit complete; design decisions locked below. **Implementation
+blocked on QC pass** — user re-uploading curated CSV from parallel QC workflow.
 
-**To build:**
+#### Schema audit summary (June 2026)
 
-| Task | Notes |
-|------|-------|
-| Load real ephys CSV | Replace `data/test_experimental_resonance.csv` or set `functional_analysis.experimental_resonance_csv` |
-| Ephys clustering | Cluster cells within coarse_type × area on peak Hz, strength, (optional) morpho metadata |
-| Expression at matched resolution | Options: (a) pseudobulk module scores for matched Allen supertype; (b) cell-level MERFISH where cell ID mapping exists; (c) deconvolution-weighted bulk |
-| Validation metrics | Correlate ephys subcluster centroids with module scores; ARI vs known hints; regression peak_hz ~ resonance modules |
-| L5 ET focus | Primary use case: test whether H/M-resonance gene modules split ET_low vs ET_high |
-| Reporting | Per-subcluster statement scaffold; uncertainty / n cells |
+| Finding | Implication |
+|---------|-------------|
+| **No Allen taxonomy columns** | Join at **coarse_type** (derived), not supertype/cluster |
+| **`region`:** V1 (28), V2M (72) | Primary area key → `brain_area_group` |
+| **`layer`:** L5 (73), L2-3 (27) | L2/3 IT from layer; L5 needs `assumed_type` or untyped pool |
+| **`assumed_type`:** ET (17), Tlx (9), empty (74) | Only on V2M L5; ET/Tlx are typed L5 |
+| **`area_morph`:** sparse (19 L5 V2M) | Optional CCF match (VISpm, VISam, …) when populated |
+| **Resonance:** `_chirp__Res. freq. (Hz)`, `_chirp__Res. imp. mag. (MOhm)` | Map to `peak_resonance_hz`, `resonance_strength` |
+| **`exclude_flag`:** 0 / ? / NaN | See QC rules below |
 
-**Open design questions for M6:**
+#### Locked design decisions
 
-- Do ephys cells carry Allen `supertype` / `cluster` IDs, or only coarse L5 IT / L5 ET labels?
-- Is VISp vs V2M assignment per cell from recording location?
-- Should expression comparison use supertype pseudobulk or attempt single-cell MERFISH matching?
+| # | Topic | Decision |
+|---|-------|----------|
+| 1 | Allen depth | **Coarse only** — derive `coarse_type` from `layer` + `assumed_type`; pseudobulk at `config.cell_type_level` filtered by coarse bucket |
+| 2 | Area | **`V1` → VISp**, **`V2M` → V2M**; optional `brain_area` from `area_morph` when present |
+| 3 | Expression | **Pseudobulk** module scores from `functional/visp_v2m/` — no single-cell MERFISH |
+| 4 | Type labels | **`ET` → L5 ET**, **`Tlx` → L5 IT** |
+| 5 | `exclude_flag` NaN | **Include** (treat as pass) |
+| 6 | `res_freq == 0` | **Include** — no resonance in 0.5–50 Hz band; meaningful contrast cluster |
+| 7 | `source_sheet` | **Keep all rows** (no sheet filter) |
+| 8 | **M6 v1 scope** | **V2M × L5 ET only** (~16 cells with `assumed_type=ET`, `region=V2M`, `layer=L5`) |
+| 9 | Before M6 done | **Extend** to other cohorts (L5 IT/Tlx, L2/3, VISp, untyped L5) — see open item below |
+
+#### Open before implementation
+
+| Item | Owner | Notes |
+|------|-------|-------|
+| **Untyped L5** (~43 usable cells) | User | Include as pool, split by morphology, or exclude? **Remind at start of M6 coding step.** |
+| **QC re-upload** | User | Replace/adjust CSV after parallel QC; may update exclude rules and outlier list |
+| **`exclude_flag == ?`** | TBD after QC | Currently 7 cells; confirm with QC output |
+
+#### Column mapping (control CSV → Expresso)
+
+| Expresso | Source column | Rule |
+|----------|---------------|------|
+| `cell_id` | `cell_id` | |
+| `brain_area_group` | `region` | V1→VISp, V2M→V2M |
+| `brain_area` | `area_morph` | Normalize (`VISpm/ RSPagl` → split or first parcel); empty→NaN |
+| `coarse_type` | `layer`, `assumed_type` | L2-3→L2/3 IT; ET→L5 ET; Tlx→L5 IT; L5 untyped→pending |
+| `peak_resonance_hz` | `_chirp__Res. freq. (Hz)` | Keep 0; exclude only clear failures (e.g. −73 Hz) per QC |
+| `resonance_strength` | `_chirp__Res. imp. mag. (MOhm)` | |
+| `exclude` | `exclude_flag`, `excluded_in_May` | Exclude if `1` or `excluded_in_May`; NaN flag→include |
+
+**Config:** `functional_analysis.experimental_resonance_csv` → path to QC'd CSV.
+
+#### M6 phases *(after QC re-upload)*
+
+| Phase | Task | Notes |
+|-------|------|-------|
+| **0b — QC ingest** | Load QC'd CSV; apply mapping; validate cohort counts | User re-upload |
+| **1 — Adapter** | `load_control_excitability()` → standard Expresso ephys frame | Preserve raw columns in sidecar |
+| **2 — Ephys clustering** | **V2M L5 ET** on res freq + imp mag (+ optional features) | Include res_freq=0 cluster |
+| **3 — Pseudobulk join** | Correlate subclusters with L5-ET-like targets × V2M module scores | Spearman / regression |
+| **4 — Extend cohorts** | L5 IT, L2/3, VISp, untyped L5 (after untyped decision) | Required before M6 ✅ |
+
+**Deliverables:**
+
+- `src/ephys_validation.py` (or extend `functional_analysis.py`)
+- Notebook `06_ephys_validation.ipynb` or M5 extension cells
+- `{run_dir}/ephys/` — subcluster labels, correlation tables, figures
 
 ---
 
@@ -245,7 +285,8 @@ flowchart TD
   M3 --> M5
   M4 --> M5
   M5 --> M5x
-  M5x --> M6
+  M5x --> M6a[M6 phase 0 Schema audit]
+  M6a --> M6
   M6 --> M7
 ```
 
@@ -261,8 +302,9 @@ flowchart TD
 | `aggregated_zhuang.parquet` | M4 | `{timestamp}_{level}_Zhuang-ABCA/` |
 | `evidence_table.parquet` | M5 | `{timestamp}_{level}_synthesis/` |
 | `targets/` report tree | M5 | `.../synthesis/targets/` |
-| `functional/` landscape | M5 ext | `.../synthesis/functional/` |
-| Ephys test fixture | M6 prep | `data/test_experimental_resonance.csv` |
+| `functional/` landscape | M5 ext | `.../synthesis/functional/{ccf,visp_v2m,visp_v2m_weighted}/` |
+| Ephys CSV | M6 | `functional_analysis.experimental_resonance_csv` (real data) |
+| Ephys schema demo | M6 prep | `data/test_experimental_resonance.csv` |
 
 Run folder naming: `{YYYYMMDD}_{HHMMSS}_{cell_type_level}_{dataset_slug}` under
 `output.output_dir`.
@@ -271,19 +313,13 @@ Run folder naming: `{YYYYMMDD}_{HHMMSS}_{cell_type_level}_{dataset_slug}` under
 
 ## Where we are / where we are going
 
-**Done:** A reproducible, config-driven pipeline from raw atlas data through
-cross-validated evidence tables, per-target report packs, and an initial
-**functional landscape** (resonance + neuromodulator module scores, clustering,
-VISp–V2M contrasts). Scientific correctness fixes from the full review are
-implemented (Vizgen CPM, Spearman cross-ref, kNN scaling, imputed provenance,
-fraction expressing, synthesis tiers).
+**Done:** M0–M5 including functional landscape (three region views, V2M rollups,
+unified `cell_type_level`). Cross-validated evidence, per-target reports, module
+scores, and ephys cohort linking at the M5 level.
 
-**Now:** Run the stack at the taxonomy level(s) you care about (supertype for
-functional analysis; subclass or supertype for synthesis reports). Explore whether
-expression module space recapitulates known L5 IT vs L5 ET biology and VISp vs V2M
-area differences.
+**Now (M6):** Phase 0 audit done on `control_excitability.csv`; design locked for
+V2M L5 ET v1. **Waiting for QC re-upload** before coding loader + clustering.
 
-**Next (M6):** Replace the test ephys fixture with real single-cell recordings;
-cluster within coarse types; statistically link resonance subclusters to expression
-modules — the step needed to support claims like *"this L5 ET subgroup has high
-H-resonance module score and ~6 Hz peak impedance"* with both omics and ephys evidence.
+**Before M6 complete:** extend to other cohorts; resolve **untyped L5** policy.
+
+**Then:** Subcluster V2M L5 ET ephys → correlate with V2M pseudobulk module scores.
