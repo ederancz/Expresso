@@ -7,6 +7,7 @@ from typing import Any
 
 from .area import resolve_area
 from .config import DRUG_SHEETS
+from .dedup import merge_sheet_metas, pick_canonical
 from .ids import HeaderInfo
 from .labels import col_name
 from .sheet_parser import SheetParseResult, sheet_region_layer
@@ -69,13 +70,13 @@ def _merge_notes(note: Any, comment: Any) -> str:
     return " | ".join(parts)
 
 
-def _is_excluded(cid: str, pr: SheetParseResult, excluded_may: set[str]) -> bool:
-    return cid in pr.task_exclude or cid in excluded_may
+def _is_excluded(cid: str, pr: SheetParseResult, dropped_ids: set[str]) -> bool:
+    return cid in pr.task_exclude or cid in dropped_ids
 
 
 def _expected_output_ids(
     parse_results: list[SheetParseResult],
-    excluded_may: set[str],
+    dropped_ids: set[str],
 ) -> tuple[set[str], set[tuple[str, str]]]:
     """Return (expected control cell_ids, expected effect (cell_id, experiment) pairs)."""
     control: set[str] = set()
@@ -86,7 +87,7 @@ def _expected_output_ids(
         cells_with_control: set[str] = set()
         cells_with_effect: set[str] = set()
         for pv in pr.values:
-            if _is_excluded(pv.cell_id, pr, excluded_may):
+            if _is_excluded(pv.cell_id, pr, dropped_ids):
                 continue
             if pv.block == "control":
                 cells_with_control.add(pv.cell_id)
@@ -122,10 +123,10 @@ def verify_cell_id_fidelity(
     *,
     control_rows: list[dict[str, Any]],
     effect_rows: list[dict[str, Any]],
-    excluded_may: set[str],
+    dropped_ids: set[str],
 ) -> list[str]:
     errors: list[str] = []
-    expected_control, expected_effect = _expected_output_ids(parse_results, excluded_may)
+    expected_control, expected_effect = _expected_output_ids(parse_results, dropped_ids)
 
     actual_control = {r["cell_id"] for r in control_rows}
     actual_effect = {(r["cell_id"], r["experiment"]) for r in effect_rows}
@@ -163,7 +164,7 @@ def verify_cell_id_fidelity(
                     f"cell-id: nm-prefix: {pr.sheet_name} col {h.col} "
                     f"raw={h.raw!r} → {h.normalized!r}"
                 )
-            if _is_excluded(h.normalized, pr, excluded_may):
+            if _is_excluded(h.normalized, pr, dropped_ids):
                 if h.normalized in actual_control:
                     errors.append(
                         f"cell-id: excluded {h.normalized!r} on {pr.sheet_name} "
@@ -207,7 +208,7 @@ def verify_numerical_fidelity(
     *,
     control_rows: list[dict[str, Any]],
     effect_rows: list[dict[str, Any]],
-    excluded_may: set[str],
+    dropped_ids: set[str],
 ) -> tuple[list[str], int]:
     errors: list[str] = []
     control_by_id = {r["cell_id"]: r for r in control_rows}
@@ -217,7 +218,7 @@ def verify_numerical_fidelity(
     for pr in parse_results:
         sheet = pr.sheet_name
         for pv in pr.values:
-            if _is_excluded(pv.cell_id, pr, excluded_may):
+            if _is_excluded(pv.cell_id, pr, dropped_ids):
                 continue
             if pv.block == "control" and sheet == CESIUM_SHEET:
                 continue
@@ -273,6 +274,31 @@ def verify_label_fidelity(
     return errors
 
 
+def _parse_instances_for_cell(
+    parse_results: list[SheetParseResult],
+    cid: str,
+) -> list[dict[str, Any]]:
+    """Mirror build-time instance list for metadata merge (all sheets carrying this cell)."""
+    instances: list[dict[str, Any]] = []
+    for pr in parse_results:
+        present = any(pv.cell_id == cid for pv in pr.values) or cid in pr.meta.classic_burster
+        if not present:
+            continue
+        region, layer = sheet_region_layer(pr.sheet_name)
+        instances.append(
+            {
+                "source_sheet": pr.sheet_name,
+                "region": region,
+                "layer": layer,
+                "sheet_meta": {
+                    "classic_burster": pr.meta.classic_burster,
+                    "area_morph_raw": pr.meta.area_morph_raw,
+                },
+            }
+        )
+    return instances
+
+
 def verify_metadata_fidelity(
     parse_results: list[SheetParseResult],
     *,
@@ -282,31 +308,28 @@ def verify_metadata_fidelity(
     clusters: dict[str, str],
 ) -> tuple[list[str], int]:
     errors: list[str] = []
-    sheet_by_name = {pr.sheet_name: pr for pr in parse_results}
     fields_checked = 0
 
     seen_cluster: set[str] = set()
     for row in control_rows + effect_rows:
         cid = row["cell_id"]
+        instances = _parse_instances_for_cell(parse_results, cid)
+        merged_meta = merge_sheet_metas(instances) if instances else {}
+        canonical = pick_canonical(instances) if instances else {}
         source_sheet = row["source_sheet"]
-        pr = sheet_by_name.get(source_sheet)
-        if pr is None:
-            errors.append(f"metadata: unknown source_sheet {source_sheet!r} for {cid!r}")
-            continue
 
-        expected_cb = pr.meta.classic_burster.get(cid)
+        expected_cb = merged_meta.get("classic_burster", {}).get(cid)
         fields_checked += 1
         if not byte_equal(row.get("classic_burster"), expected_cb):
             errors.append(
-                f"metadata: classic_burster {cid!r} on {source_sheet!r}: "
-                f"output={row.get('classic_burster')!r} sheet={expected_cb!r}"
+                f"metadata: classic_burster {cid!r} (canonical {source_sheet!r}): "
+                f"output={row.get('classic_burster')!r} merged={expected_cb!r}"
             )
 
         ac = all_cells.get(cid, {})
-        region, _layer = sheet_region_layer(source_sheet)
-        morph_raw = pr.meta.area_morph_raw.get(cid)
+        morph_raw = merged_meta.get("area_morph_raw", {}).get(cid)
         _area, expected_area_ccf, _mismatch = resolve_area(
-            sheet_region=region,
+            sheet_region=canonical.get("region", ""),
             morph_raw=morph_raw,
             all_cells_area=ac.get("all_cells_area"),
             all_cells_note=ac.get("note"),
@@ -314,7 +337,7 @@ def verify_metadata_fidelity(
         fields_checked += 1
         if row.get("areaCCF") != expected_area_ccf:
             errors.append(
-                f"metadata: areaCCF {cid!r} on {source_sheet!r}: "
+                f"metadata: areaCCF {cid!r} (canonical {source_sheet!r}): "
                 f"output={row.get('areaCCF')!r} expected={expected_area_ccf!r} "
                 f"(morph={morph_raw!r})"
             )
@@ -370,7 +393,7 @@ def run_phase3_checks(
     control_rows: list[dict[str, Any]],
     effect_rows: list[dict[str, Any]],
     param_cols: list[str],
-    excluded_may: set[str],
+    dropped_ids: set[str],
     all_cells: dict[str, dict[str, Any]],
     clusters: dict[str, str],
 ) -> dict[str, Any]:
@@ -383,13 +406,13 @@ def run_phase3_checks(
         parse_results,
         control_rows=control_rows,
         effect_rows=effect_rows,
-        excluded_may=excluded_may,
+        dropped_ids=dropped_ids,
     )
     num_errors, values_checked = verify_numerical_fidelity(
         parse_results,
         control_rows=control_rows,
         effect_rows=effect_rows,
-        excluded_may=excluded_may,
+        dropped_ids=dropped_ids,
     )
     label_errors = verify_label_fidelity(param_cols, parse_results)
     meta_errors, metadata_fields_checked = verify_metadata_fidelity(
@@ -401,7 +424,7 @@ def run_phase3_checks(
     )
 
     errors = cell_errors + num_errors + label_errors + meta_errors
-    expected_control, expected_effect = _expected_output_ids(parse_results, excluded_may)
+    expected_control, expected_effect = _expected_output_ids(parse_results, dropped_ids)
 
     report: dict[str, Any] = {
         "passed": len(errors) == 0,

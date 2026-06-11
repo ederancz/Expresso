@@ -20,7 +20,7 @@ Phases 2–3 **abort** on failure (no files written). Phase 4 is informational.
 - **`control_excitability`** — baseline measurements, one row per neuron (includes drug-sheet control blocks; cesium excluded).
 - **`pharmacology_effect`** — effect blocks only, one row per `(cell_id, experiment)`.
 
-**Key rules in one line each:** `excluded_in_May=1` cells dropped at parse; `exclude_flag` copied verbatim (informational only); duplicate headers disambiguated as `#1`/`#2`; overlapping cross-sheet values that disagree → `dup_conflict` + `duplicate_conflicts.csv`; numerics formatted to four significant figures on output.
+**Key rules in one line each:** `excluded_in_May=1` and `exclude_flag=1` on **`All cells`** drop cells at parse; **`All Analysed data` wins dedup** over area/layer sheets when parameters overlap; duplicate headers disambiguated as `#1`/`#2`; overlapping cross-sheet values that disagree → `dup_conflict` + `duplicate_conflicts.csv`; numerics formatted to four significant figures on output.
 
 **Default paths:** input `…/20260609_download_from_Drive/Intrinsic_properties_Analysis_Aug2024.xlsx`; output `…/physiology/restructured/`. Full provenance in `run_manifest.json`.
 
@@ -126,7 +126,7 @@ Cells with `exclude = 1` in row 4 of the TASK sheet are dropped from both scopes
 
 ### `exclude_flag`
 
-Copied verbatim from **`All cells`** column B, including non-numeric markers such as `?`. **Informational only** — not used to filter cells in downstream Expresso analysis.
+Cells with **`exclude_flag = 1`** on the **`All cells`** sheet are **dropped during parsing** (same treatment as `excluded_in_May`). Non-numeric markers such as `?` are not treated as exclusion — they are copied verbatim only for cells that remain in the output.
 
 ---
 
@@ -227,7 +227,9 @@ When the same `cell_id` appears on multiple included control sources, instances 
 
 **Dedup priority (highest first):**
 
-`V2M_L5` → `V1_L5` → `V1_L2-3` → `V2M_L2-3` → `All Analysed data` → `V2M_L5_2A_agonist` → `V2M_L5_1A_Antagonist` → `V2M_L5_MDL` → `V2M_L5_TASK_Acidic_pH` → `V2M_L5_Caesum`
+`All Analysed data` → `V2M_L5` → `V1_L5` → `V1_L2-3` → `V2M_L2-3` → `V2M_L5_2A_agonist` → `V2M_L5_1A_Antagonist` → `V2M_L5_MDL` → `V2M_L5_TASK_Acidic_pH` → `V2M_L5_Caesum`
+
+When a cell appears on **`All Analysed data`** and an area/layer sheet, **overlapping parameters** take the pooled-sheet value; region/layer metadata are still filled from the first area-sheet instance that has them. Disagreements beyond four sig figs still route to `duplicate_conflicts`.
 
 - **Any overlap disagrees** → canonical row kept in `control_excitability` with **`dup_conflict = TRUE`**; every source instance copied to `duplicate_conflicts`. Conflicting experimental values are a **data-quality red flag** for manual review.
 
@@ -303,7 +305,7 @@ After the master files are written, `intrinsic/qc_outliers.py` produces **`Intri
 
 **Stratification:** outliers are computed **within group only** — `VISp-L5`, `V2M-L5`, `VISp-L2/3`, `V2M-L2/3`. Pharmacology uses the same region–layer groups crossed with `experiment` (`region-layer|experiment`).
 
-**Excluded from IQR pools:** rows with `exclude_flag = 1` remain in the master file but do not contribute to distribution statistics (`excluded_in_May` cells are already dropped at parse time).
+**Excluded from IQR pools:** `excluded_in_May` and `exclude_flag=1` cells are dropped from the master file at parse time and do not appear in QC.
 
 **Flag matrix layout:** Before cell rows, two reference rows per group — `__GROUP_MEAN__` and `__GROUP_SD__` — populate the `{parameter}__value` twin columns with that group's mean and SD (flag columns empty). Cell rows place semicolon-separated flag codes in the parameter column and the outlying numeric value in the adjacent `__value` column.
 

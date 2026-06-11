@@ -50,6 +50,7 @@ def main() -> None:
     print(f"control_excitability: {counts['control_neurons']} neurons")
     print(f"pharmacology_effect: {counts['pharmacology_effect_rows']} rows")
     print(f"excluded_in_May dropped: {counts['excluded_in_may_dropped']} cell IDs")
+    print(f"exclude_flag dropped: {counts.get('exclude_flag_dropped', 0)} cell IDs")
     print(f"parameter columns: {counts['param_columns']}")
     print(f"label merges: {len(manifest['label_merges'])}")
     print(f"cluster fills (assumed_type): {counts['cluster_fills_assumed_type']}")

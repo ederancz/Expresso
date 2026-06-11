@@ -25,6 +25,7 @@ from .metadata import (
     fill_assumed_type_from_cluster,
     load_all_cells,
     load_cluster_metadata,
+    load_exclude_flag_ids,
     load_excluded_may_ids,
     load_metadata_tags,
     merge_cell_metadata,
@@ -122,7 +123,7 @@ def _collect_header_warnings(parse_results: list[SheetParseResult]) -> list[str]
 
 def _group_control(
     parse_results: list[SheetParseResult],
-    excluded_may: set[str],
+    dropped_ids: set[str],
 ) -> dict[str, list[dict[str, Any]]]:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for pr in parse_results:
@@ -139,7 +140,7 @@ def _group_control(
         region, layer = sheet_region_layer(sheet_name)
         meta_bundle = _sheet_meta_bundle(pr)
         for cid, pvs in by_cell.items():
-            if cid in pr.task_exclude or cid in excluded_may:
+            if cid in pr.task_exclude or cid in dropped_ids:
                 continue
             groups[cid].append(
                 {
@@ -156,7 +157,7 @@ def _group_control(
 
 def _group_effect(
     parse_results: list[SheetParseResult],
-    excluded_may: set[str],
+    dropped_ids: set[str],
 ) -> dict[tuple[str, str], list[dict[str, Any]]]:
     groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for pr in parse_results:
@@ -174,7 +175,7 @@ def _group_effect(
         region, layer = sheet_region_layer(sheet_name)
         meta_bundle = _sheet_meta_bundle(pr)
         for cid, pvs in by_cell.items():
-            if cid in pr.task_exclude or cid in excluded_may:
+            if cid in pr.task_exclude or cid in dropped_ids:
                 continue
             groups[(cid, experiment)].append(
                 {
@@ -245,11 +246,13 @@ def build_master(
 
     all_cells = load_all_cells(wb)
     excluded_may = load_excluded_may_ids(wb)
+    exclude_flag = load_exclude_flag_ids(wb)
+    dropped_ids = excluded_may | exclude_flag
     tags = load_metadata_tags(wb)
     clusters = load_cluster_metadata(wb)
 
-    control_groups = _group_control(parse_results, excluded_may)
-    effect_groups = _group_effect(parse_results, excluded_may)
+    control_groups = _group_control(parse_results, dropped_ids)
+    effect_groups = _group_effect(parse_results, dropped_ids)
 
     control_rows: list[dict[str, Any]] = []
     conflict_rows: list[dict[str, Any]] = []
@@ -362,6 +365,7 @@ def build_master(
         conflict_cell_count=conflict_cells,
         cluster_fill_count=cluster_fills,
         excluded_in_may_count=len(excluded_may),
+        exclude_flag_dropped=len(exclude_flag),
     )
 
     phase3_report = run_phase3_checks(
@@ -369,7 +373,7 @@ def build_master(
         control_rows=control_rows,
         effect_rows=effect_rows,
         param_cols=param_cols,
-        excluded_may=excluded_may,
+        dropped_ids=dropped_ids,
         all_cells=all_cells,
         clusters=clusters,
     )
@@ -412,6 +416,8 @@ def build_master(
         "conflict_rows": conflict_instances,
         "conflict_cells": conflict_cells,
         "excluded_in_may_dropped": len(excluded_may),
+        "exclude_flag_dropped": len(exclude_flag),
+        "dedup_priority_note": "All Analysed data is canonical when overlapping with area sheets",
         "label_merges": merge_log,
         "cluster_fills_assumed_type": cluster_fills,
         "cluster_fill_column": "assumed_type",

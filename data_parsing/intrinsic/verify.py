@@ -125,6 +125,7 @@ def run_phase2_checks(
     conflict_cell_count: int,
     cluster_fill_count: int,
     excluded_in_may_count: int,
+    exclude_flag_dropped: int = 0,
 ) -> dict[str, Any]:
     """
     Run all Phase 2 checks. Raises IntegrityCheckError on failure.
@@ -152,6 +153,7 @@ def run_phase2_checks(
         "cluster_fills_assumed_type": cluster_fill_count,
         "cluster_fill_column": "assumed_type",
         "excluded_in_may_dropped": excluded_in_may_count,
+        "exclude_flag_dropped": exclude_flag_dropped,
         "cesium_effect_only_cells": cesium_only,
         "errors": errors,
     }

@@ -108,7 +108,7 @@ Multiple flags on one value are semicolon-separated. Codes:
 | `bio:ratio_outside_(0,1)` | Adaptation or burst ratio not in (0, 1) |
 | `bio:res_freq_out_of_range` | Resonance frequency &lt; 0 or &gt; 200 Hz |
 
-Cells with `exclude_flag = 1` are omitted from IQR distribution pools but still appear in the matrix. Full definitions also in `run_manifest.json → phase4_qc → flag_types`.
+Cells with `exclude_flag = 1` or `excluded_in_May = 1` on **`All cells`** are dropped at parse and do not appear in the master or QC output.
 
 ## Further reading
 

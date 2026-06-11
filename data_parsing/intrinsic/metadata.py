@@ -59,6 +59,17 @@ def is_excluded_in_may(val: Any) -> bool:
     return val in (1, 1.0, "1", True)
 
 
+def is_exclude_flag(val: Any) -> bool:
+    """True when All cells exclude_flag marks the cell for drop at parse time."""
+    if val is None:
+        return False
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return int(val) == 1
+    return str(val).strip() in {"1", "1.0", "True", "true"}
+
+
 def load_excluded_may_ids(wb: Workbook) -> set[str]:
     ws = wb[ALL_CELLS_SHEET]
     out: set[str] = set()
@@ -70,6 +81,21 @@ def load_excluded_may_ids(wb: Workbook) -> set[str]:
         if not cid.startswith("nm"):
             continue
         if is_excluded_in_may(ws.cell(r, 14).value):
+            out.add(cid)
+    return out
+
+
+def load_exclude_flag_ids(wb: Workbook) -> set[str]:
+    ws = wb[ALL_CELLS_SHEET]
+    out: set[str] = set()
+    for r in range(1, ws.max_row + 1):
+        cid_raw = ws.cell(r, 1).value
+        if cid_raw is None:
+            continue
+        cid = normalize_id(str(cid_raw).strip())
+        if not cid.startswith("nm"):
+            continue
+        if is_exclude_flag(ws.cell(r, 2).value):
             out.add(cid)
     return out
 

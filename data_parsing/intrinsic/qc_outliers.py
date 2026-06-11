@@ -13,6 +13,7 @@ import numpy as np
 from openpyxl import Workbook
 
 from .area import normalize_region
+from .metadata import is_exclude_flag
 from .values import coerce_param_value
 
 QC_WORKBOOK_NAME = "Intrinsic_QC.xlsx"
@@ -94,16 +95,6 @@ class CellFlags:
     total_flags: int = 0
     param_flags: dict[str, str] = field(default_factory=dict)
     param_values: dict[str, float] = field(default_factory=dict)
-
-
-def _is_exclude_flag(val: Any) -> bool:
-    if val is None:
-        return False
-    if isinstance(val, bool):
-        return val
-    if isinstance(val, (int, float)):
-        return int(val) == 1
-    return str(val).strip() in {"1", "1.0", "True", "true"}
 
 
 def _group_key(region: Any, layer: Any) -> str:
@@ -249,7 +240,7 @@ def _collect_numeric_by_group(
         if not group:
             continue
         row_key = row.get("cell_id", "")
-        excluded = exclude_from_distribution and _is_exclude_flag(row.get("exclude_flag"))
+        excluded = exclude_from_distribution and is_exclude_flag(row.get("exclude_flag"))
         for param in param_columns:
             val = coerce_param_value(row.get(param))
             if val is None:
@@ -691,7 +682,7 @@ def write_qc_workbook(
     n_excluded_from_dist = sum(
         1
         for r in control_rows + effect_rows
-        if _is_exclude_flag(r.get("exclude_flag"))
+        if is_exclude_flag(r.get("exclude_flag"))
     )
     n_control_flagged = len(control_flagged)
     n_effect_flagged = len(effect_flagged)

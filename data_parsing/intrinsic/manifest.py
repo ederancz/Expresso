@@ -67,6 +67,7 @@ def write_run_manifest(
             "duplicate_conflict_instances": report.get("conflict_rows", 0),
             "duplicate_conflict_cells": report.get("conflict_cells", 0),
             "excluded_in_may_dropped": report.get("excluded_in_may_dropped", 0),
+            "exclude_flag_dropped": report.get("exclude_flag_dropped", 0),
             "param_columns": report.get("param_columns", 0),
             "cluster_fills_assumed_type": report.get("cluster_fills_assumed_type", 0),
         },
@@ -90,8 +91,9 @@ def write_run_manifest(
                 "Review duplicate_conflicts.csv and duplicate_conflicts in this manifest."
             ),
             "exclude_flag": (
-                "Informational only — copied verbatim from the source workbook. "
-                "Not used to exclude cells in downstream Expresso analysis."
+                "Cells with exclude_flag=1 on All cells are dropped at parse time "
+                "(same as excluded_in_May). Non-numeric markers such as ? are kept verbatim "
+                "when a cell is not dropped."
             ),
             "region": (
                 "Broad atlas region (VISp or V2M). V1 from source sheets is normalised to VISp."

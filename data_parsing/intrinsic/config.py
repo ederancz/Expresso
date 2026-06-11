@@ -43,11 +43,11 @@ STANDARD_SHEETS = [
 ]
 
 DEDUP_PRIORITY = [
+    "All Analysed data",
     "V2M_L5",
     "V1_L5",
     "V1_L2-3",
     "V2M_L2-3",
-    "All Analysed data",
     "V2M_L5_2A_agonist",
     "V2M_L5_1A_Antagonist",
     "V2M_L5_MDL",
