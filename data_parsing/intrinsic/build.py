@@ -40,6 +40,9 @@ from .sheet_parser import (
     sheet_region_layer,
 )
 from .values import format_param_for_output
+from .qc_outliers import write_qc_workbook
+from .verify import IntegrityCheckError, run_phase2_checks
+from .verify_postbuild import PostBuildVerificationError, run_phase3_checks
 
 META_COLUMNS = [
     "cell_id",
@@ -86,10 +89,6 @@ def _params_from_values(values: list[ParsedValue]) -> dict[str, Any]:
         key = col_name(pv.section, pv.label)
         params[key] = pv.value
     return params
-
-
-def _format_params(params: dict[str, Any]) -> dict[str, Any]:
-    return {k: format_param_for_output(v, OUTPUT_SIGFIGS) for k, v in params.items()}
 
 
 def _sheet_meta_bundle(pr: SheetParseResult) -> dict[str, dict]:
@@ -217,8 +216,18 @@ def _sparse_conflict_params(
     params: dict[str, Any],
     conflict_keys: set[str],
 ) -> dict[str, Any]:
-    formatted = _format_params(params)
-    return {k: formatted[k] for k in conflict_keys if k in formatted}
+    return {k: params[k] for k in conflict_keys if k in params}
+
+
+def _format_all_row_params(
+    rows: list[dict[str, Any]],
+    *,
+    skip_keys: set[str],
+) -> None:
+    for row in rows:
+        for k in list(row.keys()):
+            if k not in skip_keys:
+                row[k] = format_param_for_output(row[k], OUTPUT_SIGFIGS)
 
 
 def build_master(
@@ -285,7 +294,7 @@ def build_master(
         meta.dup_conflict = has_conflict
         row = metadata_to_row(meta)
         row["cell_id"] = cid
-        row.update(_format_params(canonical["params"]))
+        row.update(canonical["params"])
         control_rows.append(row)
 
         if has_conflict:
@@ -332,7 +341,7 @@ def build_master(
         row = metadata_to_row(meta)
         row["cell_id"] = cid
         row["experiment"] = experiment
-        row.update(_format_params(inst["params"]))
+        row.update(inst["params"])
         effect_rows.append(row)
 
     all_param_cols: set[str] = set()
@@ -340,6 +349,35 @@ def build_master(
     for r in control_rows + effect_rows:
         all_param_cols.update(k for k in r if k not in meta_set and k != "experiment")
     param_cols = _ordered_param_columns(all_param_cols)
+
+    conflict_cells = len(conflicts_detail)
+    conflict_instances = len(conflict_rows)
+
+    phase2_report = run_phase2_checks(
+        wb,
+        parse_results=parse_results,
+        control_ids={r["cell_id"] for r in control_rows},
+        effect_rows=effect_rows,
+        label_merge_count=len(merge_log),
+        conflict_cell_count=conflict_cells,
+        cluster_fill_count=cluster_fills,
+        excluded_in_may_count=len(excluded_may),
+    )
+
+    phase3_report = run_phase3_checks(
+        parse_results=parse_results,
+        control_rows=control_rows,
+        effect_rows=effect_rows,
+        param_cols=param_cols,
+        excluded_may=excluded_may,
+        all_cells=all_cells,
+        clusters=clusters,
+    )
+
+    skip_format = meta_set | {"experiment", "conflict_source_sheet"}
+    _format_all_row_params(control_rows, skip_keys=skip_format)
+    _format_all_row_params(effect_rows, skip_keys=skip_format)
+    _format_all_row_params(conflict_rows, skip_keys=set(CONFLICT_META_COLUMNS))
 
     control_cols = META_COLUMNS + param_cols
     effect_cols = META_COLUMNS + ["experiment"] + param_cols
@@ -359,8 +397,13 @@ def build_master(
     _write_csv(output_dir / "pharmacology_effect.csv", effect_rows, effect_cols)
     _write_csv(output_dir / "duplicate_conflicts.csv", conflict_rows, conflict_cols)
 
-    conflict_cells = len(conflicts_detail)
-    conflict_instances = len(conflict_rows)
+    phase4_report = write_qc_workbook(
+        output_dir,
+        control_rows=control_rows,
+        effect_rows=effect_rows,
+        meta_columns=META_COLUMNS,
+        param_columns=param_cols,
+    )
 
     report: dict[str, Any] = {
         "source": str(source_path),
@@ -376,6 +419,9 @@ def build_master(
         "duplicate_header_warnings": header_warnings,
         "duplicate_conflicts_detail": conflicts_detail,
         "region_area_conflicts": region_conflicts,
+        "phase2_verification": phase2_report,
+        "phase3_verification": phase3_report,
+        "phase4_qc": phase4_report,
     }
     manifest = write_run_manifest(output_dir, source_path=source_path, report=report)
 

@@ -11,7 +11,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from intrinsic.build import build_master
 from intrinsic.config import DEFAULT_OUTPUT_DIR, DEFAULT_SOURCE
-from intrinsic.manifest import print_run_alerts
+from intrinsic.manifest import (
+    print_phase2_pass,
+    print_phase3_pass,
+    print_phase4_summary,
+    print_run_alerts,
+)
+from intrinsic.verify import IntegrityCheckError
+from intrinsic.verify_postbuild import PostBuildVerificationError
 
 
 def main() -> None:
@@ -29,7 +36,15 @@ def main() -> None:
         help="Output directory for master workbook and CSVs",
     )
     args = parser.parse_args()
-    manifest = build_master(args.source, args.output_dir)
+    try:
+        manifest = build_master(args.source, args.output_dir)
+    except IntegrityCheckError as exc:
+        print(f"\nBUILD ABORTED — {exc.summary()}\n", file=sys.stderr)
+        sys.exit(1)
+    except PostBuildVerificationError as exc:
+        print(f"\nBUILD ABORTED — {exc.summary()}\n", file=sys.stderr)
+        sys.exit(1)
+
     counts = manifest["counts"]
 
     print(f"control_excitability: {counts['control_neurons']} neurons")
@@ -40,6 +55,9 @@ def main() -> None:
     print(f"cluster fills (assumed_type): {counts['cluster_fills_assumed_type']}")
     print(f"Wrote outputs to {args.output_dir}")
     print(f"run_manifest.json → {args.output_dir / 'run_manifest.json'}")
+    print_phase2_pass(manifest)
+    print_phase3_pass(manifest)
+    print_phase4_summary(manifest)
 
     print_run_alerts(manifest)
 
