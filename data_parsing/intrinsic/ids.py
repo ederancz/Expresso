@@ -53,3 +53,15 @@ def parse_headers_row(values: list[tuple[int, object]], *, disambiguate_dupes: b
         return out
 
     return [HeaderInfo(col=col, raw=text, normalized=norm) for col, text, norm in parsed]
+
+
+def duplicate_header_warnings(headers: list[HeaderInfo]) -> list[str]:
+    """Prominent warnings for disambiguated duplicate headers (likely student typos)."""
+    warnings: list[str] = []
+    for h in headers:
+        if "#" in h.normalized:
+            warnings.append(
+                f"DUPLICATE CELL ID HEADER: raw={h.raw!r} → {h.normalized!r} "
+                f"(same ID in two columns — likely a student typo; review source sheet)"
+            )
+    return warnings

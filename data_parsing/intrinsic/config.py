@@ -31,7 +31,7 @@ DRUG_SHEETS = {
     "V2M_L5_1A_Antagonist": "5-HT1A antagonist",
     "V2M_L5_MDL": "MDL (5-HT2A antagonist)",
     "V2M_L5_TASK_Acidic_pH": "acidic pH (6.1)",
-    "V2M_L5_Caesum": "Cs⁺ (intracellular)",
+    "V2M_L5_Caesum": "cesium (intracellular)",
 }
 
 STANDARD_SHEETS = [
@@ -58,7 +58,6 @@ DEDUP_PRIORITY = [
 METADATA_SHEETS = {
     "Assumed_tlx": {"assumed_type": "Tlx"},
     "Assumed_PT_V2M": {"assumed_type": "ET"},
-    "SC projecting cells": {"projection_target": "SC"},
 }
 
 ALL_CELLS_SHEET = "All cells"

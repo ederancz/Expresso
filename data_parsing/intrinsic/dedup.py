@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from .config import DEDUP_PRIORITY
-from .labels import col_name
 
 
 def _priority_index(source_sheet: str) -> int:
@@ -22,7 +20,6 @@ def values_equal(a: Any, b: Any, sigfigs: int = 4) -> bool:
     if a is None or b is None:
         return False
     if type(a) != type(b):
-        # Strict fidelity: different types are not equal
         if isinstance(a, (int, float)) and isinstance(b, (int, float)):
             pass
         else:
@@ -56,6 +53,20 @@ def params_agree(
     return True
 
 
+def conflicting_params(
+    params_a: dict[str, Any],
+    params_b: dict[str, Any],
+    source_a: str,
+    source_b: str,
+    sigfigs: int = 4,
+) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for k in set(params_a) & set(params_b):
+        if not values_equal(params_a[k], params_b[k], sigfigs):
+            out[k] = {source_a: params_a[k], source_b: params_b[k]}
+    return out
+
+
 def pick_canonical(instances: list[dict[str, Any]]) -> dict[str, Any]:
     """Pick canonical instance by source priority; merge non-overlapping keys."""
     ordered = sorted(instances, key=lambda x: _priority_index(x["source_sheet"]))
@@ -67,7 +78,6 @@ def pick_canonical(instances: list[dict[str, Any]]) -> dict[str, Any]:
                 params[k] = v
     canonical["params"] = params
     canonical["sheet_meta"] = merge_sheet_metas(instances)
-    # Prefer regional source for region/layer when All Analysed is canonical
     for inst in ordered:
         if inst.get("region"):
             canonical["region"] = inst["region"]
@@ -92,26 +102,45 @@ def merge_sheet_metas(instances: list[dict[str, Any]]) -> dict[str, dict]:
 
 def deduplicate_control_instances(
     instances: list[dict[str, Any]],
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]], bool]:
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], bool, list[dict[str, Any]]]:
     """
-    instances: list of {source_sheet, params, meta, ...}
-    Returns (canonical, conflict_rows, has_conflict)
+    Returns (canonical, conflict_instances, has_conflict, conflict_detail).
+    conflict_detail entries: {cell_id, sources, conflicting_params}.
     """
     if not instances:
-        return None, [], False
+        return None, [], False, []
     if len(instances) == 1:
-        return instances[0], [], False
+        return instances[0], [], False, []
 
+    detail: list[dict[str, Any]] = []
     has_conflict = False
     for i, a in enumerate(instances):
         for b in instances[i + 1 :]:
-            if not params_agree(a.get("params", {}), b.get("params", {})):
+            disagree = conflicting_params(
+                a.get("params", {}),
+                b.get("params", {}),
+                a["source_sheet"],
+                b["source_sheet"],
+            )
+            if disagree:
                 has_conflict = True
-                break
-        if has_conflict:
-            break
+                detail.append(
+                    {
+                        "sources": [a["source_sheet"], b["source_sheet"]],
+                        "conflicting_params": disagree,
+                    }
+                )
 
     canonical = pick_canonical(instances)
     if has_conflict:
-        return canonical, list(instances), True
-    return canonical, [], False
+        return canonical, list(instances), True, detail
+    return canonical, [], False, []
+
+
+def summarize_conflicts(
+    all_details: list[dict[str, Any]],
+) -> tuple[int, int]:
+    """Return (n_cells, n_instances) with measured-value conflicts."""
+    cells = {d["cell_id"] for d in all_details}
+    instances = sum(len(d.get("instances", [])) for d in all_details)
+    return len(cells), instances

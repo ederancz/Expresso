@@ -77,6 +77,18 @@ def parse_all_cells_note(raw: str | None) -> tuple[str, str]:
     return ccf_to_area(ccf), ccf
 
 
+def normalize_region(val: str) -> str:
+    """Broad atlas region for output: VISp (was V1) or V2M."""
+    if not val:
+        return ""
+    v = str(val).strip()
+    if v.upper() == "V1" or v == "VISp":
+        return "VISp"
+    if v.upper() == "V2M":
+        return "V2M"
+    return v
+
+
 def resolve_area(
     *,
     sheet_region: str,

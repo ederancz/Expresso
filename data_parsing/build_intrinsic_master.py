@@ -7,11 +7,11 @@ import argparse
 import sys
 from pathlib import Path
 
-# Allow running as script from repo root or data_parsing/
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from intrinsic.build import build_master
 from intrinsic.config import DEFAULT_OUTPUT_DIR, DEFAULT_SOURCE
+from intrinsic.manifest import print_run_alerts
 
 
 def main() -> None:
@@ -29,14 +29,19 @@ def main() -> None:
         help="Output directory for master workbook and CSVs",
     )
     args = parser.parse_args()
-    report = build_master(args.source, args.output_dir)
-    print(f"control_excitability: {report['control_neurons']} neurons")
-    print(f"pharmacology_effect: {report['effect_rows']} rows")
-    print(f"duplicate_conflicts: {report['conflict_rows']} rows")
-    print(f"parameter columns: {report['param_columns']}")
-    print(f"label merges: {len(report['label_merges'])}")
-    print(f"cluster fills (assumed_type): {report['cluster_fills_assumed_type']}")
+    manifest = build_master(args.source, args.output_dir)
+    counts = manifest["counts"]
+
+    print(f"control_excitability: {counts['control_neurons']} neurons")
+    print(f"pharmacology_effect: {counts['pharmacology_effect_rows']} rows")
+    print(f"excluded_in_May dropped: {counts['excluded_in_may_dropped']} cell IDs")
+    print(f"parameter columns: {counts['param_columns']}")
+    print(f"label merges: {len(manifest['label_merges'])}")
+    print(f"cluster fills (assumed_type): {counts['cluster_fills_assumed_type']}")
     print(f"Wrote outputs to {args.output_dir}")
+    print(f"run_manifest.json → {args.output_dir / 'run_manifest.json'}")
+
+    print_run_alerts(manifest)
 
 
 if __name__ == "__main__":

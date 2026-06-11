@@ -38,7 +38,7 @@ class SheetParseResult:
     meta: SheetMeta
     task_exclude: set[str] = field(default_factory=set)
     task_notes: dict[str, str] = field(default_factory=dict)
-    caesum_note: dict[str, str] = field(default_factory=dict)
+    cesium_secondary_skipped: dict[str, str] = field(default_factory=dict)
 
 
 def _is_id_header(val: Any) -> bool:
@@ -287,13 +287,13 @@ def parse_task_sheet(ws: Worksheet, merge_map: dict) -> SheetParseResult:
     )
 
 
-def parse_caesum_sheet(ws: Worksheet, merge_map: dict) -> SheetParseResult:
+def parse_cesium_sheet(ws: Worksheet, merge_map: dict) -> SheetParseResult:
     sheet_name = "V2M_L5_Caesum"
     headers = _detect_headers(ws, sheet_name)
     meta = SheetMeta()
     values: list[ParsedValue] = []
     id_by_col = {h.col: h.normalized for h in headers}
-    caesum_notes: dict[str, str] = {}
+    cesium_skipped: dict[str, str] = {}
 
     section: str | None = None
     in_secondary = False
@@ -319,7 +319,7 @@ def parse_caesum_sheet(ws: Worksheet, merge_map: dict) -> SheetParseResult:
                     in_secondary = True
                     for col, cid in id_by_col.items():
                         if ws.cell(r, col).value is not None:
-                            caesum_notes[cid] = "ambiguous secondary −56 mV block; primary block used"
+                            cesium_skipped[cid] = "ambiguous secondary −56 mV block; primary block used"
             continue
 
         if section is None or in_secondary:
@@ -349,8 +349,11 @@ def parse_caesum_sheet(ws: Worksheet, merge_map: dict) -> SheetParseResult:
         headers=headers,
         values=values,
         meta=meta,
-        caesum_note=caesum_notes,
+        cesium_secondary_skipped=cesium_skipped,
     )
+
+
+parse_caesum_sheet = parse_cesium_sheet  # Excel sheet name retains student typo
 
 
 def sheet_region_layer(sheet_name: str) -> tuple[str, str]:
