@@ -50,6 +50,7 @@ META_COLUMNS = [
     "region",
     "areaCCF",
     "layer",
+    "projection_target",
     "assumed_type",
     "physiological_cluster",
     "source_sheet",
@@ -67,6 +68,7 @@ CONFLICT_META_COLUMNS = [
     "region",
     "areaCCF",
     "layer",
+    "projection_target",
     "assumed_type",
     "physiological_cluster",
     "source_sheet",
@@ -376,6 +378,7 @@ def build_master(
         dropped_ids=dropped_ids,
         all_cells=all_cells,
         clusters=clusters,
+        tags=tags,
     )
 
     skip_format = meta_set | {"experiment", "conflict_source_sheet"}

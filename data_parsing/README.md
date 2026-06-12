@@ -78,6 +78,31 @@ The script prints row counts and **Phase 2–4** pass/summary lines, then **term
 
 **`duplicate_conflicts`** — When the same `cell_id` appears on multiple included sheets with **overlapping parameters that disagree beyond four significant figures**, the canonical row in `control_excitability` is flagged `dup_conflict = TRUE` and every conflicting source instance is copied here for manual review. Only parameter columns that actually disagree are populated (not the full parameter set).
 
+## `projection_target` and avoiding duplicate parameter rows
+
+The output column **`projection_target`** (after `layer`) is **metadata only**. It is **not** read from electrophysiology parameter blocks and does **not** create extra measurement rows.
+
+### How it is parsed
+
+| Source | Role |
+|--------|------|
+| **`SC projecting cells`** sheet | Metadata-only. Row **1** column headers are cell IDs (`nm…`). Any ID listed there gets **`projection_target = SC`** in all output sheets. |
+| Area / layer sheets, **`All Analysed data`**, drug control blocks | Supply **parameter values** (Rin, rheobase, etc.) — not `projection_target`. |
+
+Same pattern as other tag sheets: `Assumed_tlx` → `assumed_type`, `Assumed_PT_V2M` → `assumed_type = ET`. The **`SC projecting cells`** sheet is **excluded from parameter parsing**; only the ID list on row 1 is used.
+
+Cells not on that sheet get an **empty** `projection_target`.
+
+### Adding a new SC-projecting cell (do this — not a second param column)
+
+1. **Tag the projection (once):** add the `nm…` cell ID as a **new column header on row 1** of **`SC projecting cells`**. Rebuild → `projection_target = SC` on that row. No code changes needed.
+2. **Enter ephys measurements (once, authoritative):** put baseline numbers on **`All Analysed data`** (preferred when consolidating) or the appropriate area/layer sheet. Do **not** copy the full parameter table onto **`SC projecting cells`** — that sheet is not a data sheet and will not dedup cleanly.
+3. **Avoid the duplicate-conflict mess:** the same `cell_id` on two **parameter** sheets with **different numbers** triggers `dup_conflict` and rows in `duplicate_conflicts.csv`. Canonical values follow dedup priority (`All Analysed data` first, then area sheets). Keep one authoritative copy of each measurement; use **`SC projecting cells`** only for the SC tag.
+
+Example today: `nm2024_09_18_c5` — column header on **`SC projecting cells`**, parameters from **`All Analysed data`** / area sheets.
+
+Future non-SC projection targets will need a config/code extension (currently only `SC` is defined). See [METHODS.md](METHODS.md) for dedup priority and metadata provenance.
+
 ## Terminal alerts
 
 After a successful build, watch for banner messages:

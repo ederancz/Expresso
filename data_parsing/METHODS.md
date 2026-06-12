@@ -69,10 +69,11 @@ Parameter columns are an intentional exception to byte-identical copy: numeric v
 |-------|----------------|
 | `Assumed_tlx` | `assumed_type = Tlx` (mapped to `IT` on output) |
 | `Assumed_PT_V2M` | `assumed_type = ET` |
+| `SC projecting cells` | `projection_target = SC` |
 | `cluster_analysis_res` | `physiological_cluster` (`IT` / `ET1` / `ET2`); may fill empty `assumed_type` |
 | `All cells` | `exclude_flag`, `cre_label`, `axon`, `notes`, `time_from_5HT`, `excluded_in_May` filter |
 
-The spec also lists `SC projecting cells` → `projection_target`; that sheet is **not** wired in the current build.
+The spec also lists additional metadata-only sheets as needed; new projection targets can be added via `SC projecting cells` (column headers = cell IDs).
 
 ### Excluded entirely
 
@@ -158,22 +159,23 @@ Metadata is joined by normalised `cell_id`. Column order in outputs:
 2. `region`
 3. `areaCCF`
 4. `layer`
-5. `assumed_type`
-6. `physiological_cluster`
-7. `source_sheet`
-8. `classic_burster`
-9. `exclude_flag`
-10. `cre_label`
-11. `axon`
-12. `notes` (merged from `All cells` note and comment, separated by ` | `)
-13. `time_from_5HT`
-14. `dup_conflict` (control sheet only; always empty/false on pharmacology rows)
-15. `experiment` (pharmacology sheet only)
-16. Parameter columns (`section__label`, ordered as above)
+5. `projection_target` (e.g. `SC` from `SC projecting cells` metadata sheet; empty if none)
+6. `assumed_type`
+7. `physiological_cluster`
+8. `source_sheet`
+9. `classic_burster`
+10. `exclude_flag`
+11. `cre_label`
+12. `axon`
+13. `notes` (merged from `All cells` note and comment, separated by ` | `)
+14. `time_from_5HT`
+15. `dup_conflict` (control sheet only; always empty/false on pharmacology rows)
+16. `experiment` (pharmacology sheet only)
+17. Parameter columns (`section__label`, ordered as above)
 
 **`duplicate_conflicts`:**
 
-`cell_id`, `region`, `areaCCF`, `layer`, `assumed_type`, `physiological_cluster`, `source_sheet`, `conflict_source_sheet`, then **only disagreeing parameter columns**.
+`cell_id`, `region`, `areaCCF`, `layer`, `projection_target`, `assumed_type`, `physiological_cluster`, `source_sheet`, `conflict_source_sheet`, then **only disagreeing parameter columns**.
 
 ### Provenance
 
@@ -185,6 +187,7 @@ Metadata is joined by normalised `cell_id`. Column order in outputs:
 | `classic_burster` | Per-cell row on data sheet (`Classic burster? 0/1`) |
 | `exclude_flag`, `cre_label`, `axon`, `time_from_5HT`, notes | `All cells` |
 | `assumed_type` | `Assumed_tlx` / `Assumed_PT_V2M`; cluster fill; `PT` → `ET` |
+| `projection_target` | `SC projecting cells` (currently `SC`; empty if cell not listed) |
 | `physiological_cluster` | `cluster_analysis_res` column I (`IT`/`ET1`/`ET2`) |
 
 ### `region` vs `areaCCF`

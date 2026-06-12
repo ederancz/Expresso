@@ -306,6 +306,7 @@ def verify_metadata_fidelity(
     effect_rows: list[dict[str, Any]],
     all_cells: dict[str, dict[str, Any]],
     clusters: dict[str, str],
+    tags: dict[str, dict[str, str]],
 ) -> tuple[list[str], int]:
     errors: list[str] = []
     fields_checked = 0
@@ -364,6 +365,14 @@ def verify_metadata_fidelity(
                 f"output={row.get('notes')!r} expected={expected_notes!r}"
             )
 
+        expected_pt = tags.get(cid, {}).get("projection_target", "")
+        fields_checked += 1
+        if row.get("projection_target") != expected_pt:
+            errors.append(
+                f"metadata: projection_target {cid!r}: "
+                f"output={row.get('projection_target')!r} expected={expected_pt!r}"
+            )
+
         if cid in clusters:
             seen_cluster.add(cid)
             fields_checked += 1
@@ -396,6 +405,7 @@ def run_phase3_checks(
     dropped_ids: set[str],
     all_cells: dict[str, dict[str, Any]],
     clusters: dict[str, str],
+    tags: dict[str, dict[str, str]],
 ) -> dict[str, Any]:
     """
     Run all Phase 3 post-build checks on raw built rows (before sig-fig formatting).
@@ -421,6 +431,7 @@ def run_phase3_checks(
         effect_rows=effect_rows,
         all_cells=all_cells,
         clusters=clusters,
+        tags=tags,
     )
 
     errors = cell_errors + num_errors + label_errors + meta_errors

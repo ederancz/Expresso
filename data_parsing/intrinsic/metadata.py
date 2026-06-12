@@ -19,6 +19,7 @@ class CellMetadata:
     region_sheet: str = ""
     region_conflict: bool = False
     layer: str = ""
+    projection_target: str = ""
     classic_burster: Any = None
     area_ccf: str = ""
     exclude_flag: Any = None
@@ -226,6 +227,7 @@ def metadata_to_row(meta: CellMetadata) -> dict[str, Any]:
         "region": meta.region,
         "areaCCF": meta.area_ccf,
         "layer": meta.layer,
+        "projection_target": meta.projection_target,
         "assumed_type": meta.assumed_type,
         "physiological_cluster": meta.physiological_cluster,
         "source_sheet": meta.source_sheet,
