@@ -29,6 +29,16 @@ EXPRESSED_TIERS = frozenset({"high", "medium"})
 FAMILY_LABEL = {"noradrenaline": "NE", "acetylcholine": "ACh"}
 TRANSMITTER_BY_FAMILY = {"noradrenaline": "NE", "acetylcholine": "ACh"}
 COUPLING_COLORS = {"Gi": "#4C72B0", "Gq": "#C44E52", "Gs": "#55A868", "ionotropic": "#8172B2"}
+COARSE_TYPE_ORDER = ("L2/3 IT", "L5 IT", "L5 ET")
+
+
+def _coarse_sort_key(coarse: str) -> int:
+    try:
+        return COARSE_TYPE_ORDER.index(coarse)
+    except ValueError:
+        return len(COARSE_TYPE_ORDER)
+
+
 COUPLING_LEGEND = (
     "Bar colours = G-protein / channel coupling: "
     "Gi (blue), Gq (red), Gs (green), ionotropic (purple)"
@@ -262,10 +272,46 @@ def build_receptor_order_table(summary: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(rows)
     if out.empty:
         return out
-    sort_cols = ["coarse_type", "brain_area", "priority_score"]
+    out["_coarse_ord"] = out["coarse_type"].map(_coarse_sort_key)
+    sort_cols = ["_coarse_ord", "priority_score"]
+    ascending = [True, False]
     if "cell_type" in out.columns and out["cell_type"].nunique() > out["coarse_type"].nunique():
-        sort_cols = ["coarse_type", "cell_type", "priority_score"]
-    return out.sort_values(sort_cols, ascending=[True, True, False])
+        sort_cols = ["_coarse_ord", "cell_type", "priority_score"]
+        ascending = [True, True, False]
+    elif "brain_area" in out.columns and out["brain_area"].nunique() > 1:
+        sort_cols = ["_coarse_ord", "brain_area", "priority_score"]
+        ascending = [True, True, False]
+    return out.sort_values(sort_cols, ascending=ascending).drop(columns=["_coarse_ord"])
+
+
+def top_priorities_by_coarse(
+    order_table: pd.DataFrame,
+    *,
+    family: str | None = None,
+    genes: set[str] | None = None,
+    top_per_coarse: int = 3,
+) -> pd.DataFrame:
+    """Top-scoring rows within each coarse type (for balanced executive summaries)."""
+    sub = order_table.copy()
+    if genes is not None:
+        sub = sub[sub["gene"].isin(genes)]
+    if family is not None:
+        sub = sub[
+            sub["gene"].map(
+                lambda g: get_pharmacology(g) is not None
+                and get_pharmacology(g).family == family  # type: ignore[union-attr]
+            )
+        ]
+    picks: list[pd.DataFrame] = []
+    for _coarse, chunk in sub.groupby("coarse_type", observed=True):
+        picks.append(chunk.nlargest(top_per_coarse, "priority_score"))
+    if not picks:
+        return sub.iloc[0:0]
+    out = pd.concat(picks, ignore_index=True)
+    out["_coarse_ord"] = out["coarse_type"].map(_coarse_sort_key)
+    return out.sort_values(["_coarse_ord", "priority_score"], ascending=[True, False]).drop(
+        columns=["_coarse_ord"],
+    )
 
 
 def compute_transmitter_scenario(
@@ -852,9 +898,10 @@ def write_experiment_plan(
         lines.append("")
 
     for family in spec.family_order:
-        top = order_table[
-            order_table["gene"].isin(summary.loc[summary["family"] == family, "gene"].unique())
-        ].head(8)
+        family_genes = set(summary.loc[summary["family"] == family, "gene"].unique())
+        top = top_priorities_by_coarse(
+            order_table, genes=family_genes, top_per_coarse=3,
+        )
         high_genes = summary[
             (summary["family"] == family) & (summary["confidence_tier"] == "high")
         ]["gene"].unique()
@@ -862,13 +909,26 @@ def write_experiment_plan(
         lines.append(
             f"{fam_lbl[family]}: {len(high_genes)} genes at high confidence in {scope}."
         )
+        if spec.coarse_types and spec.per_supertype:
+            for coarse in spec.coarse_types:
+                g_hi = summary[
+                    (summary["family"] == family)
+                    & (summary["confidence_tier"] == "high")
+                    & (summary["coarse_type"] == coarse)
+                ]["gene"].unique()
+                lines.append(
+                    f"  {coarse}: high-confidence genes — {', '.join(sorted(g_hi)) or '—'}"
+                )
         if not top.empty:
             def _label(r: pd.Series) -> str:
                 ct = r.get("cell_type") or r["top_cell_type"]
                 return f"{r.gene} ({ct})"
 
-            order_str = ", ".join(_label(r) for _, r in top.head(5).iterrows())
-            lines.append(f"  Top ordering priorities: {order_str}")
+            order_str = "; ".join(
+                f"{coarse}: {', '.join(_label(r) for _, r in grp.iterrows())}"
+                for coarse, grp in top.groupby("coarse_type", observed=True)
+            )
+            lines.append(f"  Top ordering priorities by subtype: {order_str}")
 
     lines.extend([
         "",
